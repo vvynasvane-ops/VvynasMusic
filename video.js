@@ -91,6 +91,7 @@ const state = {
   currentTrackEl: null, currentSubUrl: null, currentItem: null,
   subtitleMatches: [], subtitleIndex: -1,
   preferredAudioLang: "en",
+  search: "",
 };
 
 const $ = (s) => document.querySelector(s);
@@ -103,6 +104,7 @@ const els = {
   prevBtn: $("#vpPrevBtn"), playBtn: $("#vpPlayBtn"), playIcon: $("#vpPlayIcon"), nextBtn: $("#vpNextBtn"),
   seek: $("#vpSeek"), cur: $("#vpCur"), total: $("#vpTotal"),
   videoList: $("#videoList"), m4aList: $("#m4aList"), videoLabel: $("#videoLabel"), m4aLabel: $("#m4aLabel"),
+  searchWrap: $("#vpSearchWrap"), searchInput: $("#vpSearchInput"), searchClear: $("#vpSearchClear"),
   backBtn: $("#backBtn"), fullscreenBtn: $("#fullscreenBtn"), folderFallback: $("#vpFolderFallback"),
   ccBtn: $("#ccBtn"), ccModalOverlay: $("#ccModalOverlay"), ccList: $("#ccList"),
   ccLoadFileRow: $("#ccLoadFileRow"), ccCloseBtn: $("#ccCloseBtn"), subtitleFileInput: $("#vpSubtitleFile"),
@@ -192,15 +194,27 @@ function rowHtml(item, kind) {
   </div>`;
 }
 
+function matchesSearch(item) {
+  const q = state.search.trim().toLowerCase();
+  if (!q) return true;
+  return item.name.toLowerCase().includes(q);
+}
+
 function render() {
-  els.videoLabel.textContent = `Video Files (${state.videos.length})`;
-  els.m4aLabel.textContent = `M4A Files (${state.m4as.length})`;
-  els.videoList.innerHTML = state.videos.length
-    ? state.videos.map(v => rowHtml(v, "video")).join("")
-    : `<div style="padding:16px;color:var(--text-muted);font-size:13px;">No video files found.</div>`;
-  els.m4aList.innerHTML = state.m4as.length
-    ? state.m4as.map(v => rowHtml(v, "m4a")).join("")
-    : `<div style="padding:16px;color:var(--text-muted);font-size:13px;">No M4A files found.</div>`;
+  const q = state.search.trim();
+  const filteredVideos = state.videos.filter(matchesSearch);
+  const filteredM4as = state.m4as.filter(matchesSearch);
+
+  els.videoLabel.textContent = q ? `Video Files (${filteredVideos.length} of ${state.videos.length})` : `Video Files (${state.videos.length})`;
+  els.m4aLabel.textContent = q ? `M4A Files (${filteredM4as.length} of ${state.m4as.length})` : `M4A Files (${state.m4as.length})`;
+
+  els.videoList.innerHTML = filteredVideos.length
+    ? filteredVideos.map(v => rowHtml(v, "video")).join("")
+    : `<div class="vp-no-results">${q ? "No video files match your search." : "No video files found."}</div>`;
+  els.m4aList.innerHTML = filteredM4as.length
+    ? filteredM4as.map(v => rowHtml(v, "m4a")).join("")
+    : `<div class="vp-no-results">${q ? "No M4A files match your search." : "No M4A files found."}</div>`;
+
   [...els.videoList.querySelectorAll(".vp-row"), ...els.m4aList.querySelectorAll(".vp-row")].forEach(row => {
     row.classList.toggle("active", state.queue[state.queueIndex] === row.dataset.id);
   });
@@ -355,6 +369,30 @@ els.seek.addEventListener("input", () => { if (els.video.duration) els.video.cur
   const row = e.target.closest(".vp-row");
   if (row) playId(row.dataset.id);
 }));
+
+/* ---------------------------------------------------------------------
+   Search — filters both the Video Files and M4A Files lists live.
+   --------------------------------------------------------------------- */
+els.searchInput.addEventListener("input", () => {
+  state.search = els.searchInput.value;
+  els.searchWrap.classList.toggle("has-text", !!state.search);
+  render();
+});
+els.searchClear.addEventListener("click", () => {
+  state.search = ""; els.searchInput.value = "";
+  els.searchWrap.classList.remove("has-text");
+  render();
+  els.searchInput.focus();
+});
+window.addEventListener("keydown", (e) => {
+  // "/" focuses search, like most list-heavy web apps — but never steal it
+  // from an input the person is already typing in.
+  const tag = (e.target && e.target.tagName) || "";
+  if (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") { e.preventDefault(); els.searchInput.focus(); }
+  else if (e.key === "Escape" && document.activeElement === els.searchInput && state.search) {
+    state.search = ""; els.searchInput.value = ""; els.searchWrap.classList.remove("has-text"); render();
+  }
+});
 
 /* ---------------------------------------------------------------------
    Subtitles — WebVTT via <track>, the one subtitle format every browser
