@@ -54,6 +54,30 @@
   .vp-row .kind { font-size: 10.5px; color: var(--text-muted); border: 1px solid var(--divider); border-radius: 999px; padding: 2px 8px; flex: none; }
   .vp-grant { padding: 60px 24px; text-align: center; }
   .vp-grant p { color: var(--text-secondary); font-size: 14px; max-width: 340px; margin: 10px auto 20px; line-height: 1.5; }
+
+  /* Codec / playback warning banner — shown when a video track can't be
+     decoded (classic "MKV plays audio only" symptom) so it's explained
+     instead of leaving a confusing blank frame. */
+  .vp-warning {
+    display: flex; align-items: flex-start; gap: 10px; margin: 10px 18px 0; padding: 11px 13px;
+    background: rgba(178,34,34,0.12); border: 1px solid rgba(178,34,34,0.4); border-radius: var(--radius-s);
+    color: var(--text-primary); font-size: 12px; line-height: 1.5;
+  }
+  .vp-warning svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--accent2); }
+  .vp-warning strong { color: var(--accent2); }
+
+  /* Subtitle (CC) picker */
+  .cc-btn.active-cc { color: var(--accent); }
+  .cc-modal { background: var(--bg-card); border: 1px solid var(--divider); border-radius: var(--radius-m); width: 100%; max-width: 360px; padding: 18px; }
+  .cc-modal h3 { font-family: var(--font-display); font-size: 15px; color: var(--accent); margin: 0 0 12px; }
+  .cc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; border-radius: var(--radius-s); cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+  .cc-row:hover { background: var(--ripple); }
+  .cc-row.active { color: var(--accent); background: var(--accent-dim); }
+  .cc-row svg { width: 15px; height: 15px; flex: none; }
+  .cc-row .src-tag { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+
+  /* Native <video> track cue styling, so subtitles read clearly over any footage */
+  video::cue { background: rgba(0,0,0,.7); color: #fff; font-size: 1.05em; padding: 2px 6px; }
 </style>
 </head>
 <body>
@@ -61,6 +85,7 @@
 <header class="vp-topbar">
   <button class="icon-btn" id="backBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
   <h1>Video Player</h1>
+  <button class="icon-btn cc-btn" id="ccBtn" title="Subtitles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 11.5h2M7 14h4M15 11.5h2M15 14h2"/></svg></button>
   <button class="icon-btn" id="fullscreenBtn" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
 </header>
 
@@ -82,6 +107,10 @@
   <div class="vp-stage" id="vpStage">
     <div class="vp-empty-stage" id="vpEmptyStage">Select a file below to play</div>
     <video id="vpVideo" class="hidden" playsinline controls-list="nodownload"></video>
+  </div>
+  <div id="vpWarning" class="vp-warning hidden">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.18A2 2 0 003.82 21h16.36a2 2 0 001.71-2.96L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <span id="vpWarningText"></span>
   </div>
   <div class="vp-meta">
     <div class="title" id="vpTitle">Nothing playing</div>
@@ -105,6 +134,20 @@
 </div>
 
 <input type="file" id="vpFolderFallback" webkitdirectory multiple class="hidden">
+<input type="file" id="vpSubtitleFile" accept=".srt,.vtt,.txt" class="hidden">
+
+<!-- Subtitle (CC) picker -->
+<div class="modal-overlay" id="ccModalOverlay">
+  <div class="cc-modal">
+    <h3>Subtitles</h3>
+    <div id="ccList"></div>
+    <div class="cc-row" id="ccLoadFileRow">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+      Load Subtitle File (.srt / .vtt)…
+    </div>
+    <button class="btn-secondary" id="ccCloseBtn" style="margin-top:10px;">Close</button>
+  </div>
+</div>
 
 <div id="toast"></div>
 

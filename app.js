@@ -1066,7 +1066,7 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 /* ---------------------------------------------------------------------
    Event wiring
    --------------------------------------------------------------------- */
-els.grantAccessBtn.addEventListener("click", requestFolderAccess);
+els.grantAccessBtn.onclick = requestFolderAccess; // single handler — showResumePrompt() reassigns this same property, never adds a second listener
 els.rescanBtn.addEventListener("click", requestFolderAccess);
 els.settingsRescanBtn.addEventListener("click", () => { closeSettings(); requestFolderAccess(); });
 els.installSidebarBtn.addEventListener("click", triggerInstall);
