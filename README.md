@@ -1,16 +1,17 @@
 # Vvynas Vane — Web
 
 A web replica of the Vvynas Vane Android music player: your local song
-library, playlists, folders, favorites, monthly/yearly recap, a simple
-video player, DJ Mode, and a full-screen player with 42 animated
-backgrounds — all running in the browser. No file is ever uploaded;
-everything plays straight from the folder you grant access to, on-device.
+library, playlists, folders, favorites, monthly/yearly recap, a video
+player with auto-detected subtitles and multi-language audio, DJ Mode, and
+a full-screen player with 42 animated backgrounds — all running in the
+browser. No file is ever uploaded; everything plays straight from the
+folder you grant access to, on-device.
 
 ## Files
 
 ```
 index.html   Library / player / playlists / folders / favorites (main hub)
-video.html   Simple, standard video + M4A player — no animation, no transitions
+video.html   Video + M4A player, with subtitle and multi-audio-track support
 recap.html   Monthly & yearly listening recap, purple starry theme + poster download
 dj.html      DJ Mode — dual decks, crossfader, bass boost, 4 visualizer themes
 shared.js    IndexedDB, 8-font manager, storage access, 42 animated themes,
@@ -45,86 +46,116 @@ step required.
   sigil art, shuffle/repeat, up-next queue, full-screen player with
   lock-screen media controls.
 - **42 animated backgrounds**, ported theme-by-theme from
-  `AnimatedThemeView.java` (same colors, same layout, same motion) —
-  select one from Settings → Animated Background. Only shows on the full
-  player screen, matching the Android app. Also ported: pixie-dust tap
-  sparkles, a storybook page-turn transition on song change, and an
-  orbiting globe-title wordmark.
-- **8-font customization** (Settings → Font): Monospace (the real app's
-  actual default), Serif, Sans-serif, Condensed, Sans-serif Light/Medium/
-  Black, and Casual — applied live across the whole app.
-- **Monthly & yearly recap** (`recap.html`): a separate purple-starry
-  screen (matching `RecapActivity`'s own palette) with listening time,
-  songs played, top track, a month-by-month bar chart, and a downloadable
-  poster image. Stats accumulate automatically as you listen.
-- **Video player** (`video.html`): deliberately plain — standard controls,
-  a Video/M4A file list, no animated backdrop or transitions.
-- **DJ Mode** (`dj.html`): dual decks with independent play/cue/pitch, a
-  real constant-power crossfader, an 808/bass-boost slider, Auto Mix,
-  Beat Sync, play-count shoutouts, a battle queue, and 4 beat-reactive
-  visualizer themes — ported from `DJModeActivity.java` /
-  `DJVisualizer.java`. See below for details.
-- **Connecting overlay**: granting or resuming folder access shows a gold
-  hourglass loader with cycling status text and a small traveling-car
-  progress motif, so it's clear something real is happening in the
-  background — rather than a frozen screen.
-- **Installable**: manifest + service worker power native "Add to Home
-  Screen" on Android/desktop, with in-app instructions for iOS Safari.
-  Available anytime from the sidebar or Settings — not pushed on first
-  load.
+  `AnimatedThemeView.java`, plus pixie-dust tap sparkles, a storybook
+  page-turn transition, and an orbiting globe-title wordmark.
+- **8-font customization** (Settings → Font), applied live app-wide.
+- **Monthly & yearly recap** (`recap.html`): purple-starry screen matching
+  `RecapActivity`'s own palette, with a downloadable poster.
+- **Video player** (`video.html`) — see below for playback, subtitles, and
+  multi-language audio.
+- **DJ Mode** (`dj.html`): dual decks, real crossfader, bass boost, Auto
+  Mix, Beat Sync, play-count shoutouts, a battle queue, and 4 beat-reactive
+  visualizer themes running as a true full-page background — ported from
+  `DJModeActivity.java` / `DJVisualizer.java`.
+- **Connecting overlay**: an hourglass loader with cycling status text
+  while granting/resuming folder access, instead of a frozen screen.
+- **Installable**: manifest + service worker power "Add to Home Screen,"
+  available from the sidebar/Settings — not pushed on first load.
+- **Dark mode**: true near-black (`#000000`/`#050505`/`#0B0B0B`) across the
+  whole app, with the gold/crimson accents kept intact.
 - **Responsive**: sidebar + wide player on tablet/laptop, bottom tab bar +
   compact player on phones.
 
-## Recent fixes
+## Video playback & subtitles (`video.html`)
 
-- Removed the "Add to Home Screen" prompt from the first-load onboarding
-  screen (still reachable from Settings/sidebar).
-- Added the hourglass/orbit/track/dot loaders across the app: hourglass +
-  traveling car for the main connecting flow, an orbiting-particle spinner
-  while the video page scans a folder and while DJ Mode loads its library,
-  and a purple jelly-dot stream while the recap page reads your listening
-  history.
-- Fixed a mobile tab-bar visibility bug that could leave it in the wrong
-  state after a resize/rotation.
-- Fixed folder-picker cancellation during a *rescan* incorrectly stranding
-  you on the "Grant Access" screen instead of returning to your already-
-  loaded library.
-- Fixed a bug (present in the video and library pages too) where the
-  "Grant Access" button had both a permanent click listener and a
-  reassigned `.onclick` for the "Resume Access" state — meaning a resume
-  tap fired both at once, popping an unwanted folder picker alongside the
-  resume attempt. Every grant button now uses a single reassignable
-  handler.
+**MKV support.** Browsers don't have one universal answer for MKV — there's
+no reliable, fully-stable way to force-decode a codec a browser genuinely
+doesn't support without a heavy WASM transcoder, which isn't fast or
+stable enough for a real player. Instead this uses the two changes that
+actually move the needle and are dependency-free:
+
+1. Every file is re-wrapped in a `Blob` with the *correct* MIME type
+   (`video/x-matroska` for `.mkv`, etc.) before playback. Browsers/OSes
+   frequently fail to auto-detect the right type for less common
+   extensions — `.mkv` especially — which was silently breaking codec
+   detection. This alone fixes playback for the large majority of MKV
+   files (H.264 or VP9/VP8 video + AAC/Opus/Vorbis/MP3 audio — what most
+   real-world MKV rips actually use).
+2. If a video track still can't be decoded (most often an HEVC/H.265 MKV,
+   which Chrome/Firefox don't support without OS-level codec support), the
+   player **detects and explains it directly** — checking for
+   `videoWidth === 0` on a file that isn't audio-only — instead of leaving
+   a silent black screen while only audio plays. It tells you what's
+   likely wrong and suggests VLC or re-encoding.
+
+**Subtitles — auto-detected, with language recognition.** Implemented with
+native `<track kind="subtitles">` + WebVTT — the one subtitle format every
+browser supports with zero dependencies (no browser can extract embedded
+subtitle streams from an MKV container, so this is the closest stable
+equivalent):
+
+- Drop one or more `.srt`/`.vtt` files next to a video with a matching
+  filename and they're auto-detected the moment you play it. Language-
+  tagged filenames are recognized automatically — `Movie.en.srt`,
+  `Movie.fr.srt`, `Movie.spanish.srt`, etc. (20 common language codes/
+  names) — and English is auto-selected and displayed first if present.
+- Press **V** anytime to cycle subtitle languages (Off → each detected
+  language → Off) — the same convention VLC uses.
+- The **CC** button opens a picker showing every detected language by
+  name, or lets you load any `.srt`/`.vtt` manually.
+
+**Multi-language audio, with an English recommendation.** Uses the native
+`HTMLMediaElement.audioTracks` API (Chrome/Edge/Opera; not exposed by
+Firefox/Safari, so this quietly does nothing there rather than break):
+
+- If a file has more than one embedded audio track (common for dubbed
+  rips) and an English track is found, it's **switched to automatically**
+  as the default, with a toast explaining what happened.
+- If multiple tracks exist but none are taggable as English, you're
+  prompted to pick one via the new **AUD** button (only shown when more
+  than one track is present).
 
 ## DJ Mode (`dj.html`)
 
-A full port of `DJModeActivity.java` + `DJVisualizer.java`:
+A full port of `DJModeActivity.java` + `DJVisualizer.java` — dual decks
+each on their own Web Audio graph, a constant-power crossfader, an
+808/bass-boost low-shelf filter, per-deck pitch control, Auto Mix with the
+same phased crossfade timing as the source, Beat Sync, the original
+Game-of-Thrones-flavored play-count shoutouts, a battle queue, and 4
+beat-reactive visualizer themes (DRAGONFIRE / LANNISTER / STARK WINTER /
+NIGHT KING) ported 1:1 from `DJVisualizer`'s layered grid/lasers/rings/
+waveform bars/particles.
 
-- **Dual decks (A & B)** — independent select/play/cue, each backed by its
-  own `<audio>` element routed through the Web Audio API.
-- **Real crossfader** — constant-power pan (cos/sin) between decks, the
-  same volume math as the Android version.
-- **808 / Bass Boost slider** — a Web Audio low-shelf filter standing in
-  for Android's `BassBoost` effect, 0–100 mapped to 0–15dB.
-- **Pitch sliders** — `playbackRate` 0.5×–1.5×, per deck.
-- **Auto Mix** — automatic crossfade + track scheduling when a deck ends,
-  with the same phased timing (crossfade → load next → ease back to
-  center) as the source.
-- **Beat Sync** — a randomized 400–600ms pulse into the visualizer,
-  simulating ~100–150 BPM.
-- **Play-count shoutouts** — the same Game-of-Thrones-flavored callouts at
-  3/5/10/20/50+ plays, plus a manual 🎤 Shout button.
-- **DJ Queue** — add tracks, tap to load onto whichever deck is idle, or
-  remove with ✕.
-- **4 visualizer themes** (DRAGONFIRE / LANNISTER / STARK WINTER / NIGHT
-  KING) — a 1:1 canvas port of `DJVisualizer`'s layered grid, laser beams,
-  pulsing rings, waveform bars, and particles, all beat- and
-  energy-reactive. Cycle with the palette icon.
-- **DJ Settings** — visual theme, crossfade duration, bass presets, reset
-  play counts, clear queue, and an About panel — matching the Android
-  settings sheet.
+The visualizer runs as a full-page fixed background behind every screen in
+DJ Mode. The deck/mixer/queue cards are glass panels (blurred, translucent)
+rather than opaque, so the animation stays visible throughout — and its
+own brightness/particle count are dialed back (an internal `INTENSITY`
+multiplier) so it reads as ambient motion rather than competing with the
+controls for attention.
 
 Reachable from the sidebar, the Settings modal, or directly at `dj.html`.
+
+## Fix log
+
+- Removed the "Add to Home Screen" prompt from first-load onboarding
+  (still reachable from Settings/sidebar).
+- Added hourglass/orbit/track/dot loaders in fitting spots across the app.
+- Fixed a mobile tab-bar visibility bug after resize/rotation.
+- Fixed folder-picker cancellation during a rescan stranding you on the
+  "Grant Access" screen instead of returning to your loaded library.
+- Fixed a bug where "Grant Access" buttons had both a permanent click
+  listener and a reassigned `.onclick` for "Resume Access," so a resume
+  tap fired both at once. Every grant button now uses a single
+  reassignable handler.
+- Fixed MKV files frequently failing to show video (playing audio only) by
+  correcting MIME-type detection.
+- Added subtitle support with automatic sibling-file + language detection,
+  SRT→VTT conversion, a "V" keyboard shortcut, and a CC picker.
+- Added multi-language audio-track detection with an automatic English
+  preference and an AUD picker for manual selection.
+- Tuned DJ Mode's visualizer to run as a true full-page background with
+  glass-panel cards and reduced animation intensity.
+- Pushed dark mode to true near-black across the whole app.
 
 ## Still simplified
 

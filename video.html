@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Video Player — Vvynas Vane</title>
-<meta name="theme-color" content="#0A0806">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -85,7 +85,8 @@
 <header class="vp-topbar">
   <button class="icon-btn" id="backBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
   <h1>Video Player</h1>
-  <button class="icon-btn cc-btn" id="ccBtn" title="Subtitles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 11.5h2M7 14h4M15 11.5h2M15 14h2"/></svg></button>
+  <button class="icon-btn cc-btn" id="ccBtn" title="Subtitles (press V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 11.5h2M7 14h4M15 11.5h2M15 14h2"/></svg></button>
+  <button class="icon-btn hidden" id="audBtn" title="Audio language"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg></button>
   <button class="icon-btn" id="fullscreenBtn" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
 </header>
 
@@ -145,7 +146,18 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
       Load Subtitle File (.srt / .vtt)…
     </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">Tip: press <strong>V</strong> anytime to cycle subtitle languages.</div>
     <button class="btn-secondary" id="ccCloseBtn" style="margin-top:10px;">Close</button>
+  </div>
+</div>
+
+<!-- Audio language picker -->
+<div class="modal-overlay" id="audModalOverlay">
+  <div class="cc-modal">
+    <h3>Audio Language</h3>
+    <div id="audList"></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">English is preferred automatically when more than one audio track is found.</div>
+    <button class="btn-secondary" id="audCloseBtn" style="margin-top:10px;">Close</button>
   </div>
 </div>
 

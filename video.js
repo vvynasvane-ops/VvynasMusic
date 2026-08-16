@@ -46,10 +46,51 @@ const MIME_BY_EXT = {
   mov: "video/quicktime", avi: "video/x-msvideo", m4a: "audio/mp4",
 };
 
+// Language codes recognized in subtitle filenames, e.g. "Movie.en.srt",
+// "Movie.eng.srt", "Movie.english.srt" — the standard convention most
+// subtitle sites and rippers use. Keyed by every alias, so lookups are a
+// single object hit regardless of which form the file uses.
+const LANGUAGE_ALIASES = {
+  en: "English", eng: "English", english: "English",
+  fr: "French", fre: "French", fra: "French", french: "French",
+  es: "Spanish", spa: "Spanish", spanish: "Spanish",
+  de: "German", ger: "German", deu: "German", german: "German",
+  it: "Italian", ita: "Italian", italian: "Italian",
+  pt: "Portuguese", por: "Portuguese", portuguese: "Portuguese", "pt-br": "Portuguese (Brazil)",
+  ja: "Japanese", jpn: "Japanese", japanese: "Japanese",
+  ko: "Korean", kor: "Korean", korean: "Korean",
+  zh: "Chinese", chi: "Chinese", zho: "Chinese", chinese: "Chinese",
+  ar: "Arabic", ara: "Arabic", arabic: "Arabic",
+  ru: "Russian", rus: "Russian", russian: "Russian",
+  hi: "Hindi", hin: "Hindi", hindi: "Hindi",
+  nl: "Dutch", dut: "Dutch", nld: "Dutch", dutch: "Dutch",
+  sv: "Swedish", swe: "Swedish", swedish: "Swedish",
+  tr: "Turkish", tur: "Turkish", turkish: "Turkish",
+  pl: "Polish", pol: "Polish", polish: "Polish",
+  vi: "Vietnamese", vie: "Vietnamese", vietnamese: "Vietnamese",
+  th: "Thai", tha: "Thai", thai: "Thai",
+};
+
+/** Splits "Movie Name.en.srt" into { base: "movie name", lang: "English", langCode: "en" }.
+ *  Falls back to base = full filename (no language tag) when nothing matches. */
+function parseSubtitleName(filename) {
+  const noExt = filename.replace(SUB_EXT, "");
+  const parts = noExt.split(".");
+  if (parts.length > 1) {
+    const tag = parts[parts.length - 1].toLowerCase();
+    if (LANGUAGE_ALIASES[tag]) {
+      return { base: parts.slice(0, -1).join(".").toLowerCase(), lang: LANGUAGE_ALIASES[tag], langCode: tag };
+    }
+  }
+  return { base: noExt.toLowerCase(), lang: null, langCode: null };
+}
+
 const state = {
   videos: [], m4as: [], subs: [], fileRefs: new Map(), subRefs: new Map(),
   queue: [], queueIndex: -1, usingFSApi: false, objectUrl: null,
   currentTrackEl: null, currentSubUrl: null, currentItem: null,
+  subtitleMatches: [], subtitleIndex: -1,
+  preferredAudioLang: "en",
 };
 
 const $ = (s) => document.querySelector(s);
@@ -65,6 +106,7 @@ const els = {
   backBtn: $("#backBtn"), fullscreenBtn: $("#fullscreenBtn"), folderFallback: $("#vpFolderFallback"),
   ccBtn: $("#ccBtn"), ccModalOverlay: $("#ccModalOverlay"), ccList: $("#ccList"),
   ccLoadFileRow: $("#ccLoadFileRow"), ccCloseBtn: $("#ccCloseBtn"), subtitleFileInput: $("#vpSubtitleFile"),
+  audBtn: $("#audBtn"), audModalOverlay: $("#audModalOverlay"), audList: $("#audList"), audCloseBtn: $("#audCloseBtn"),
   toast: $("#toast"),
 };
 
@@ -126,7 +168,8 @@ function buildLists(entries) {
     const folder = e.path.slice(0, e.path.length - name.length);
     if (SUB_EXT.test(name)) {
       state.subRefs.set(id, e.handle);
-      state.subs.push({ id, name, folder, base: baseName(name) });
+      const parsed = parseSubtitleName(name);
+      state.subs.push({ id, name, folder, base: parsed.base, lang: parsed.lang, langCode: parsed.langCode });
     } else {
       state.fileRefs.set(id, e.handle);
       const item = { id, name, folder, ext: extOf(name), base: baseName(name) };
@@ -224,10 +267,66 @@ async function playId(id) {
     if (!looksLikeAudioOnly && els.video.videoWidth === 0 && els.video.videoHeight === 0 && els.video.duration > 0) {
       warn(`<strong>Audio only:</strong> the video track in this ${item.ext.toUpperCase()} couldn't be decoded — likely an unsupported codec (HEVC/H.265 is the most common culprit in Matroska/MKV files). Audio will keep playing. For full video, try VLC, or re-encode with H.264/VP9 video.`);
     }
+    handleAudioTracks();
   }, { once: true });
 
   autoLoadSiblingSubtitle(item);
 }
+
+/* ---------------------------------------------------------------------
+   Multi-language audio tracks — native HTMLMediaElement.audioTracks.
+   Supported by Chrome/Edge/Opera for local files with multiple embedded
+   audio streams (common for dubbed MKV/MP4 rips); Firefox/Safari don't
+   expose it, so this quietly does nothing there rather than break.
+   Default preference: switch to English automatically when more than one
+   audio track is present and English isn't already the active one, and
+   tell the person that happened (with a one-tap way to undo it).
+   --------------------------------------------------------------------- */
+function handleAudioTracks() {
+  const tracks = els.video.audioTracks;
+  if (!tracks || tracks.length <= 1) { els.audBtn.classList.add("hidden"); return; }
+  els.audBtn.classList.remove("hidden");
+
+  const isEnglish = (t) => /^en\b/i.test(t.language || "") || /english/i.test(t.label || "");
+  let currentIdx = 0, englishIdx = -1;
+  for (let i = 0; i < tracks.length; i++) { if (tracks[i].enabled) currentIdx = i; if (isEnglish(tracks[i])) englishIdx = i; }
+
+  if (englishIdx !== -1 && englishIdx !== currentIdx) {
+    for (let i = 0; i < tracks.length; i++) tracks[i].enabled = (i === englishIdx);
+    toast(`Switched to English audio (${tracks.length} tracks found) — tap AUD to change`);
+  } else if (englishIdx === -1) {
+    toast(`${tracks.length} audio tracks found — tap AUD to choose a language`);
+  }
+}
+function audioTrackLabel(t, i) {
+  if (t.label) return t.label;
+  if (t.language) return (LANGUAGE_ALIASES[t.language.toLowerCase()] || t.language.toUpperCase());
+  return `Track ${i + 1}`;
+}
+function openAudModal() {
+  const tracks = els.video.audioTracks;
+  if (!tracks || !tracks.length) { els.audModalOverlay.classList.remove("open"); return; }
+  const rows = [];
+  for (let i = 0; i < tracks.length; i++) {
+    rows.push(`<div class="cc-row ${tracks[i].enabled ? "active" : ""}" data-aud-idx="${i}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg>
+      ${escapeHtml(audioTrackLabel(tracks[i], i))}</div>`);
+  }
+  els.audList.innerHTML = rows.join("");
+  els.audModalOverlay.classList.add("open");
+}
+els.audBtn.addEventListener("click", openAudModal);
+els.audCloseBtn.addEventListener("click", () => els.audModalOverlay.classList.remove("open"));
+els.audModalOverlay.addEventListener("click", (e) => { if (e.target === els.audModalOverlay) els.audModalOverlay.classList.remove("open"); });
+els.audList.addEventListener("click", (e) => {
+  const row = e.target.closest("[data-aud-idx]");
+  if (!row) return;
+  const tracks = els.video.audioTracks;
+  const idx = Number(row.dataset.audIdx);
+  for (let i = 0; i < tracks.length; i++) tracks[i].enabled = (i === idx);
+  toast(`Audio: ${audioTrackLabel(tracks[idx], idx)}`);
+  els.audModalOverlay.classList.remove("open");
+});
 
 function togglePlay() { if (!els.video.src) return; if (els.video.paused) els.video.play(); else els.video.pause(); }
 function next() { if (!state.queue.length) return; let i = state.queueIndex + 1; if (i >= state.queue.length) i = 0; playId(state.queue[i]); }
@@ -273,6 +372,7 @@ function looksLikeVtt(text) { return /^\uFEFF?WEBVTT/.test(text.trim()); }
 function clearSubtitle() {
   if (state.currentTrackEl) { state.currentTrackEl.remove(); state.currentTrackEl = null; }
   if (state.currentSubUrl) { URL.revokeObjectURL(state.currentSubUrl); state.currentSubUrl = null; }
+  els.ccBtn.classList.remove("active-cc");
 }
 
 async function applySubtitleFromText(text, label) {
@@ -292,27 +392,61 @@ async function applySubtitleFromText(text, label) {
 }
 
 function findSiblingSubtitles(item) {
-  return state.subs.filter(s => s.folder === item.folder && s.base === item.base);
+  const matches = state.subs.filter(s => s.folder === item.folder && s.base === item.base);
+  // English first (if present), then other named languages alphabetically, then unlabeled tracks last.
+  return matches.sort((a, b) => {
+    if (a.lang === "English") return -1;
+    if (b.lang === "English") return 1;
+    if (a.lang && b.lang) return a.lang.localeCompare(b.lang);
+    if (a.lang) return -1;
+    if (b.lang) return 1;
+    return a.name.localeCompare(b.name);
+  });
 }
+function subtitleLabel(m) { return m.lang ? m.lang : m.name; }
+
 async function autoLoadSiblingSubtitle(item) {
-  const matches = findSiblingSubtitles(item);
-  if (!matches.length) return;
-  const file = await getSubFile(matches[0].id);
-  if (!file) return;
-  const text = await file.text();
-  await applySubtitleFromText(text, matches[0].name);
-  toast(`Loaded subtitles: ${matches[0].name}`);
+  state.subtitleMatches = findSiblingSubtitles(item);
+  state.subtitleIndex = -1; // -1 = off
+  if (!state.subtitleMatches.length) return;
+  await selectSubtitleByIndex(0, true);
 }
 
-/* CC picker modal */
+async function selectSubtitleByIndex(idx, silent) {
+  const matches = state.subtitleMatches || [];
+  if (idx < 0 || idx >= matches.length) {
+    clearSubtitle();
+    state.subtitleIndex = -1;
+    if (!silent) toast("Subtitles: Off");
+    return;
+  }
+  const m = matches[idx];
+  const file = await getSubFile(m.id);
+  if (!file) { toast("Couldn't read that subtitle file."); return; }
+  const text = await file.text();
+  await applySubtitleFromText(text, subtitleLabel(m));
+  state.subtitleIndex = idx;
+  if (!silent) toast(`Subtitles: ${subtitleLabel(m)}`);
+}
+
+/** VLC-style "V" key — cycles Off → each detected language → Off. */
+function cycleSubtitleTrack() {
+  const matches = state.subtitleMatches || [];
+  if (!matches.length) { toast("No subtitles detected for this video."); return; }
+  const next = (state.subtitleIndex + 1 >= matches.length) ? -1 : state.subtitleIndex + 1;
+  selectSubtitleByIndex(next, false);
+}
+
+/* CC picker modal — shows every auto-detected language, click to display it immediately */
 function openCcModal() {
-  const matches = state.currentItem ? findSiblingSubtitles(state.currentItem) : [];
+  const matches = state.subtitleMatches || [];
   const rows = [];
-  rows.push(`<div class="cc-row ${!state.currentTrackEl ? "active" : ""}" data-action="off">
+  rows.push(`<div class="cc-row ${state.subtitleIndex === -1 ? "active" : ""}" data-action="off">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg> Off</div>`);
-  matches.forEach(m => rows.push(`<div class="cc-row" data-sub-id="${m.id}">
+  matches.forEach((m, i) => rows.push(`<div class="cc-row ${state.subtitleIndex === i ? "active" : ""}" data-sub-idx="${i}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>
-    ${escapeHtml(m.name)} <span class="src-tag">in folder</span></div>`));
+    ${escapeHtml(subtitleLabel(m))} ${m.lang ? `<span class="src-tag">${escapeHtml(m.name)}</span>` : `<span class="src-tag">detected</span>`}</div>`));
+  if (!matches.length) rows.push(`<div class="cc-row" style="color:var(--text-muted);cursor:default;">No subtitles auto-detected for this video</div>`);
   els.ccList.innerHTML = rows.join("");
   els.ccModalOverlay.classList.add("open");
 }
@@ -321,16 +455,9 @@ els.ccCloseBtn.addEventListener("click", () => els.ccModalOverlay.classList.remo
 els.ccModalOverlay.addEventListener("click", (e) => { if (e.target === els.ccModalOverlay) els.ccModalOverlay.classList.remove("open"); });
 els.ccList.addEventListener("click", async (e) => {
   const off = e.target.closest('[data-action="off"]');
-  if (off) { clearSubtitle(); els.ccBtn.classList.remove("active-cc"); els.ccModalOverlay.classList.remove("open"); return; }
-  const row = e.target.closest("[data-sub-id]");
-  if (row) {
-    const file = await getSubFile(row.dataset.subId);
-    if (!file) { toast("Couldn't read that subtitle file."); return; }
-    const text = await file.text();
-    const meta = state.subs.find(s => s.id === row.dataset.subId);
-    await applySubtitleFromText(text, meta ? meta.name : "Subtitles");
-    els.ccModalOverlay.classList.remove("open");
-  }
+  if (off) { await selectSubtitleByIndex(-1, true); els.ccModalOverlay.classList.remove("open"); return; }
+  const row = e.target.closest("[data-sub-idx]");
+  if (row) { await selectSubtitleByIndex(Number(row.dataset.subIdx), true); els.ccModalOverlay.classList.remove("open"); }
 });
 els.ccLoadFileRow.addEventListener("click", () => { els.ccModalOverlay.classList.remove("open"); els.subtitleFileInput.click(); });
 els.subtitleFileInput.addEventListener("change", async (e) => {
@@ -341,6 +468,16 @@ els.subtitleFileInput.addEventListener("change", async (e) => {
   await applySubtitleFromText(text, file.name);
   toast(`Loaded subtitles: ${file.name}`);
   e.target.value = "";
+});
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts — "V" cycles subtitle language tracks (Off → each
+   detected language → Off), matching the same convention VLC uses.
+   --------------------------------------------------------------------- */
+window.addEventListener("keydown", (e) => {
+  const tag = (e.target && e.target.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "v" || e.key === "V") { e.preventDefault(); cycleSubtitleTrack(); }
 });
 
 /* ---------------------------------------------------------------------

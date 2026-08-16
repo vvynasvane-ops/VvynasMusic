@@ -5,10 +5,10 @@
      overridden live by the 8-way font picker (Settings → Fonts). */
   --font-user: 'Courier New', ui-monospace, 'JetBrains Mono', monospace;
   --font-user-weight: 400;
-  --bg-primary: #0A0806;
-  --bg-secondary: #110E0B;
-  --bg-card: #1A1410;
-  --bg-card2: #211A14;
+  --bg-primary: #000000;
+  --bg-secondary: #050505;
+  --bg-card: #0B0B0B;
+  --bg-card2: #121212;
 
   --accent: #C9A84C;
   --accent-dim: rgba(201,168,76,0.33);
@@ -22,9 +22,9 @@
   --text-secondary: #B8935A;
   --text-muted: #5C4A30;
 
-  --divider: #2A1E10;
+  --divider: #1C1C1C;
   --ripple: rgba(201,168,76,0.13);
-  --overlay: rgba(10,8,6,0.8);
+  --overlay: rgba(0,0,0,0.88);
 
   --radius-s: 8px;
   --radius-m: 14px;
