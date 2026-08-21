@@ -7,6 +7,21 @@
 "use strict";
 const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, C, linGrad, radGrad } = window.VV;
 
+/** Same art priority as the main library: a custom uploaded photo, then
+ *  the song's own embedded cover (cached in IndexedDB the first time the
+ *  main library scanned it — see loadEmbeddedArt in app.js), then the
+ *  generated placeholder. DJ Mode doesn't re-scan files for embedded art
+ *  itself; it just reuses whatever the main app already found. */
+async function deckArtUrl(song) {
+  try {
+    const custom = await idbGet("customArt", song.id);
+    if (custom) return custom;
+    const embedded = await idbGet("embeddedArt", song.id);
+    if (embedded) return embedded;
+  } catch { /* fall back below */ }
+  return generatedArt(song.title + song.artist + song.id, 120);
+}
+
 const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
 function titleCaseFromFilename(name) {
   const noExt = name.replace(AUDIO_EXT, "");
@@ -344,6 +359,7 @@ async function loadDeck(letter, song) {
   ui.title.textContent = song.title;
   ui.artist.textContent = song.artist;
   ui.art.innerHTML = `<img src="${generatedArt(song.title + song.artist + song.id, 120)}" alt="">`;
+  deckArtUrl(song).then((url) => { if (deck.song === song) ui.art.innerHTML = `<img src="${url}" alt="">`; });
   updatePlayCountBadge(song, ui.count);
   setStatus(letter === "A" ? "⚔ LOADING DECK A..." : "◈ LOADING DECK B...");
 
