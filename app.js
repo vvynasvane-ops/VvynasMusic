@@ -2120,14 +2120,28 @@ function applyOverlayStrength() {
   const v = state.settings.overlayStrength ?? 55;
   const t = Math.max(0, Math.min(100, v)) / 100;
   const root = document.documentElement.style;
-  root.setProperty("--np-overlay-a", (0.08 + t * 0.62).toFixed(2));
-  root.setProperty("--np-overlay-mid", (0.20 + t * 0.65).toFixed(2));
-  root.setProperty("--np-overlay-b", (0.35 + t * 0.55).toFixed(2));
-  root.setProperty("--np-text-shadow-blur", (2 + t * 12).toFixed(1) + "px");
-  root.setProperty("--np-text-shadow-a", (0.25 + t * 0.6).toFixed(2));
-  root.setProperty("--np-mini-bg-a", (0.55 + t * 0.4).toFixed(2));
-  if (els.overlayStrengthInput) els.overlayStrengthInput.value = String(v);
+  // Curve was front-loaded — most of the darkening happened in the
+  // slider's first half, so pushing past ~55% barely changed anything
+  // and even 100% never got close to fully opaque. Squaring t skews the
+  // ramp so the back half of the slider keeps adding real darkness
+  // instead of flattening out, and the ceiling now reaches near-opaque
+  // at 100% instead of stalling at 0.70/0.90.
+  const t2 = t * t * (3 - 2 * t); // smoothstep — gentle at both ends, no flat plateau in the middle either
+  root.setProperty("--np-overlay-a", (0.06 + t2 * 0.82).toFixed(2));
+  root.setProperty("--np-overlay-mid", (0.16 + t2 * 0.78).toFixed(2));
+  root.setProperty("--np-overlay-b", (0.30 + t2 * 0.65).toFixed(2));
+  root.setProperty("--np-text-shadow-blur", (2 + t2 * 14).toFixed(1) + "px");
+  root.setProperty("--np-text-shadow-a", (0.25 + t2 * 0.65).toFixed(2));
+  root.setProperty("--np-mini-bg-a", (0.5 + t2 * 0.48).toFixed(2));
   if (els.overlayStrengthValue) els.overlayStrengthValue.textContent = v + "%";
+  // Only touch the slider's own .value when it's out of sync (i.e. when
+  // this call came from loading/restoring settings, not from the user
+  // actively dragging it) — reassigning .value on every "input" tick,
+  // even to the same number, is what was making the thumb feel like it
+  // was fighting the drag gesture instead of following it smoothly.
+  if (els.overlayStrengthInput && Number(els.overlayStrengthInput.value) !== v) {
+    els.overlayStrengthInput.value = String(v);
+  }
 }
 function openSettings() { els.settingsModalOverlay.classList.add("open"); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
 function closeSettings() { els.settingsModalOverlay.classList.remove("open"); }
