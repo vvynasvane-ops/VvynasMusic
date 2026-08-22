@@ -11,12 +11,16 @@
    IndexedDB — delegated to shared.js (VV) so index/video/recap pages
    never open the database at different versions and block each other.
    --------------------------------------------------------------------- */
-const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut, openDB } = window.VV;
 
 /* ---------------------------------------------------------------------
    State
    --------------------------------------------------------------------- */
-const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
+// Recognized audio extensions live in shared.js (window.VV.AUDIO_EXT) so
+// the main library scan, DJ Mode's scan, and the folder-picker fallback
+// all agree on what counts as "a song" — see the comment there for the
+// full list and rationale.
+const AUDIO_EXT = window.VV.AUDIO_EXT;
 const RECENT_CAP = 100;
 
 const state = {
@@ -151,6 +155,15 @@ const els = {
 
   iosModalOverlay: $("#iosModalOverlay"),
   closeIosModalBtn: $("#closeIosModalBtn"),
+
+  openThemeCarouselBtn: $("#openThemeCarouselBtn"),
+  themeCarouselOverlay: $("#themeCarouselOverlay"),
+  tcTrack: $("#tcTrack"),
+  tcPrevBtn: $("#tcPrevBtn"),
+  tcNextBtn: $("#tcNextBtn"),
+  tcCloseBtn: $("#tcCloseBtn"),
+  tcConfirmBtn: $("#tcConfirmBtn"),
+  tcCurrentLabel: $("#tcCurrentLabel"),
 
   toast: $("#toast"),
 };
@@ -313,13 +326,16 @@ const CUSTOM_BG_VIDEO_MAX_BYTES = 60 * 1024 * 1024; // 60MB cap — generous for
 let customBgVideoObjectUrl = null;
 
 /* ---------------------------------------------------------------------
-   Rage Mode ambience effect — what billows across the screen. "Intense
-   Smoke" (default) fills the screen with thick, dense, dark smoke;
-   "None" turns the effect off. There is no flame/fire or dripping
-   effect. Only relevant while Rage Mode is on (Settings → Ambience).
+   Rage Mode ambience effect — what billows/crackles across the screen.
+   "Intense Smoke" (default) fills the screen with thick, dense, dark
+   smoke; "Thunderstorm" replaces it with driving rain plus real jagged
+   lightning bolts that strike at random (see generateBolt() /
+   drawThunderstorm() in RageMode below); "None" turns the effect off.
+   Only relevant while Rage Mode is on (Settings → Ambience).
    --------------------------------------------------------------------- */
 const RAGE_DRIP_TYPES = [
   { id: "smoke", label: "💨 Intense Smoke" },
+  { id: "lightning", label: "⚡ Thunderstorm" },
   { id: "none", label: "Off" },
 ];
 let rageLineIdx = 0, rageLineTimer = null;
@@ -345,8 +361,9 @@ const RageMode = (() => {
   let embers = [], bassAvg = 0, bassRolling = 0.08, lastFlash = 0;
   let demonEyes = [], denSkulls = [], chains = [], toxicPool = null, denInitialized = false;
   let bgActive = false;
-  let smokeParticles = [], dripType = "smoke"; // dripType: "smoke" | "none"
-  const EMBER_COUNT = 70, SMOKE_COUNT = 20, SMOKE_COUNT_INTENSE = 46;
+  let smokeParticles = [], dripType = "smoke"; // dripType: "smoke" | "lightning" | "none"
+  let rainDrops = [], boltPath = null, boltAlpha = 0, boltFlicker = 0, boltTimer = 90;
+  const EMBER_COUNT = 70, SMOKE_COUNT = 20, SMOKE_COUNT_INTENSE = 46, RAIN_COUNT = 110;
 
   function resize() { if (!canvas) return; W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
 
@@ -386,6 +403,81 @@ const RageMode = (() => {
       g.addColorStop(0, `rgba(50,45,42,${a})`); g.addColorStop(0.6, `rgba(30,26,24,${a * 0.7})`); g.addColorStop(1, "rgba(20,16,15,0)");
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
     });
+  }
+
+  function spawnRainDrop(d) {
+    d.x = Math.random() * (W + 200) - 100; d.y = -20 - Math.random() * H;
+    d.len = 16 + Math.random() * 26; d.speed = 9 + Math.random() * 8;
+    d.drift = -3.5 - Math.random() * 2; d.alpha = 0.14 + Math.random() * 0.22;
+  }
+  /** Rebuilds the rain particle pool for the "Thunderstorm" drip effect. */
+  function initRain() { rainDrops = Array.from({ length: RAIN_COUNT }, () => { const d = {}; spawnRainDrop(d); d.y = Math.random() * H; return d; }); }
+  /** Builds one jagged lightning-bolt path via recursive midpoint
+   *  displacement — start near the top of the screen, strike down toward
+   *  a random point in the lower half, with an optional shorter branch
+   *  forking off partway down. Returns { main: [[x,y],...], branches }. */
+  function jaggedPath(x1, y1, x2, y2, depth, spread) {
+    if (depth <= 0) return [[x1, y1], [x2, y2]];
+    const mx = (x1 + x2) / 2 + (Math.random() - 0.5) * spread;
+    const my = (y1 + y2) / 2;
+    const left = jaggedPath(x1, y1, mx, my, depth - 1, spread * 0.55);
+    const right = jaggedPath(mx, my, x2, y2, depth - 1, spread * 0.55);
+    return left.slice(0, -1).concat(right);
+  }
+  function generateBolt() {
+    const startX = W * (0.12 + Math.random() * 0.76);
+    const endX = startX + (Math.random() - 0.5) * W * 0.3;
+    const endY = H * (0.55 + Math.random() * 0.4);
+    const main = jaggedPath(startX, -10, endX, endY, 6, W * 0.14);
+    const branches = [];
+    const branchCount = Math.random() < 0.75 ? 1 : 2;
+    for (let b = 0; b < branchCount; b++) {
+      const bi = Math.floor(main.length * (0.25 + Math.random() * 0.4));
+      const [bx, by] = main[bi];
+      const bEndX = bx + (Math.random() - 0.5) * W * 0.18;
+      const bEndY = by + H * (0.12 + Math.random() * 0.12);
+      branches.push(jaggedPath(bx, by, bEndX, bEndY, 3, W * 0.06));
+    }
+    return { main, branches };
+  }
+  function strokeBoltPath(pts) {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+  /** "Thunderstorm" drip effect — driving rain plus real jagged lightning
+   *  bolts that strike the screen at random, branching and flickering,
+   *  paired with the existing bass-hit flash/shake for real thunder-clap
+   *  impact. Bolts strike more often the harder the track is hitting. */
+  function drawThunderstorm() {
+    if (!rainDrops.length) initRain();
+    const speedMul = 1 + bassAvg * 1.4;
+    ctx.lineCap = "round";
+    rainDrops.forEach(d => {
+      d.y += d.speed * speedMul; d.x += d.drift * 0.35;
+      if (d.y - d.len > H || d.x < -100) spawnRainDrop(d);
+      ctx.strokeStyle = `rgba(185,205,255,${d.alpha})`; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.drift, d.y + d.len); ctx.stroke();
+    });
+
+    boltTimer -= 1;
+    if (boltTimer <= 0 && boltAlpha <= 0.02) {
+      boltPath = generateBolt();
+      boltAlpha = 1; boltFlicker = 2;
+      triggerFlash(); shakeScreen(5 + bassAvg * 5);
+      boltTimer = Math.round((110 + Math.random() * 220) * (1 - bassAvg * 0.45));
+    }
+    if (boltAlpha > 0.02 && boltPath) {
+      ctx.save();
+      ctx.shadowColor = "rgba(200,225,255,0.9)"; ctx.shadowBlur = 20;
+      ctx.strokeStyle = `rgba(232,242,255,${boltAlpha})`; ctx.lineWidth = 2.6;
+      strokeBoltPath(boltPath.main);
+      ctx.strokeStyle = `rgba(200,220,255,${boltAlpha * 0.75})`; ctx.lineWidth = 1.4;
+      boltPath.branches.forEach(strokeBoltPath);
+      ctx.restore();
+      boltAlpha *= 0.78;
+      if (boltAlpha < 0.45 && boltFlicker > 0) { boltAlpha = Math.min(1, boltAlpha + 0.55); boltFlicker--; }
+    }
   }
 
   function initDenScene() {
@@ -522,9 +614,11 @@ const RageMode = (() => {
       ctx.fillStyle = glow; ctx.fill();
     });
 
-    // "Intense Smoke" fills the screen with dense, dark smoke. "None"
-    // draws nothing here.
+    // "Intense Smoke" fills the screen with dense, dark smoke.
+    // "Thunderstorm" draws rain + random lightning bolts. "None" draws
+    // nothing here.
     if (dripType === "smoke") drawSmoke();
+    else if (dripType === "lightning") drawThunderstorm();
 
     // final concentration pass — darker toward the edges, brightest low-center
     const vig = ctx.createRadialGradient(W / 2, H * 0.6, H * 0.25, W / 2, H * 0.6, H * 0.85);
@@ -639,12 +733,13 @@ const RageMode = (() => {
    *  underneath it — called from Settings whenever the Rage Background
    *  picker changes, and on load. */
   function setBackgroundActive(on) { bgActive = on; }
-  /** Switches the ambience effect — "smoke" (default, dense billowing
-   *  smoke) or "none" (effect off entirely). No flame/fire or dripping
-   *  effect exists. Called from Settings → Ambience. */
+  /** Switches the ambience effect — "smoke" (dense billowing smoke),
+   *  "lightning" (rain + random lightning bolts), or "none" (effect off
+   *  entirely). Called from Settings → Ambience. */
   function setDripType(type) {
     dripType = type;
     if (type === "smoke") initSmoke(true);
+    else if (type === "lightning") { if (!rainDrops.length) initRain(); }
     else if (!smokeParticles.length) initSmoke(false);
   }
   function init(canvasEl) {
@@ -1388,10 +1483,19 @@ async function loadAndPlayCurrent() {
   if (!file) { toast("Couldn't read that file."); return; }
   if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
   state.objectUrl = URL.createObjectURL(file);
+  const myLoadToken = ++audioLoadToken; // guards against a stale play()/error firing after a newer track has already started loading
   audio.src = state.objectUrl;
   RageMode.ensureAudioGraph();
-  try { await audio.play(); state.isPlaying = true; }
-  catch (err) { state.isPlaying = false; }
+  try {
+    await audio.play();
+    if (myLoadToken !== audioLoadToken) return;
+    state.isPlaying = true;
+  } catch (err) {
+    if (myLoadToken !== audioLoadToken) return;
+    state.isPlaying = false;
+    handleUnplayableSong(song, err);
+    return;
+  }
   bumpPlayCount(songId);
   bumpMonthStat(song);
   recordRecentlyPlayed(songId);
@@ -1399,6 +1503,17 @@ async function loadAndPlayCurrent() {
   syncNowPlayingUI(song);
   updateMediaSession(song);
   render();
+}
+let audioLoadToken = 0;
+/** Broadening which extensions count as "a song" (see AUDIO_EXT) means
+ *  some files that get found and added still won't have a decoder the
+ *  browser/OS actually supports — e.g. WMA, MIDI, or an unusual codec
+ *  inside a common container. Rather than leaving playback silently
+ *  stuck on a track that will never start, let the person know and move
+ *  on automatically instead of stalling the queue. */
+function handleUnplayableSong(song) {
+  toast(`Can't play "${song.title}" — unsupported audio format on this device.`, 3200);
+  if (state.queue.length > 1) setTimeout(() => nextSong(true), 500);
 }
 
 /* ---------------------------------------------------------------------
@@ -1533,6 +1648,15 @@ audio.addEventListener("timeupdate", () => {
 audio.addEventListener("ended", () => nextSong(true));
 audio.addEventListener("play", () => { state.isPlaying = true; setPlayIcon(true); });
 audio.addEventListener("pause", () => { state.isPlaying = false; setPlayIcon(false); });
+/** Covers the case where a file's src loads far enough for play() to
+ *  resolve but decoding then fails (corrupt file, or a codec the
+ *  container claims to hold but this browser can't actually decode) —
+ *  same graceful skip-forward as the play()-rejection path above. */
+audio.addEventListener("error", () => {
+  if (!audio.error) return;
+  const song = state.songs.find(s => s.id === state.queue[state.queueIndex]);
+  if (song) { state.isPlaying = false; handleUnplayableSong(song); }
+});
 
 function seekTo(clientX) {
   const rect = els.seekTrack.getBoundingClientRect();
@@ -1744,20 +1868,73 @@ function hexToRgb(hex) {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
   return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 201, g: 168, b: 76 };
 }
-function rgbToHex(r, g, b) { return "#" + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join(""); }
+function rgbToHex(r, g, b) { return "#" + [r, g, b].map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join(""); }
 function shadeColor(hex, factor) { const { r, g, b } = hexToRgb(hex); return rgbToHex(r * factor, g * factor, b * factor); }
 function rgba(hex, alpha) { const { r, g, b } = hexToRgb(hex); return `rgba(${r},${g},${b},${alpha})`; }
+/** Perceived brightness (0-255) of a hex color, ITU-R BT.601 luma weights —
+ *  cheap and good enough to decide "is this light or dark" for contrast
+ *  purposes, no need for full WCAG relative-luminance math here. */
+function perceivedBrightness(hex) { const { r, g, b } = hexToRgb(hex); return (r * 299 + g * 587 + b * 114) / 1000; }
+/** WCAG relative luminance + contrast ratio, used to pick a text/icon ink
+ *  color that's actually readable against a given background — see
+ *  pickInkForStops() below for why this replaced the old single-color
+ *  brightness check. */
+function relLuminance(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const chan = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const [R, G, B] = [chan(r), chan(g), chan(b)];
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+}
+function contrastRatio(hex1, hex2) {
+  const l1 = relLuminance(hex1), l2 = relLuminance(hex2);
+  const [lighter, darker] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (lighter + 0.05) / (darker + 0.05);
+}
+/** Every solid-accent control (the "Create" button, play button, selected
+ *  checkmark...) is actually painted with a gradient from `top` to `bottom`
+ *  (e.g. --accent to --accent-dark), not a flat color. Picking the ink by
+ *  only checking brightness of the TOP stop used to leave the bottom of the
+ *  gradient under-contrast for plenty of accent colors (including the
+ *  default gold, whose gradient bottom only hit ~4:1 against dark ink —
+ *  under the 4.5:1 AA minimum). This is the actual bug behind "Create"
+ *  sometimes being hard to read: it depended on where in the gradient the
+ *  text sat, not just which accent was picked. Instead, test BOTH
+ *  candidate inks against BOTH gradient stops and keep whichever ink wins
+ *  the worst-case (minimum) contrast, so the button stays legible end to
+ *  end regardless of the accent color. */
+function pickInkForStops(top, bottom) {
+  const DARK_INK = "#16110a", LIGHT_INK = "#F5EFE0";
+  const worstFor = (ink) => Math.min(contrastRatio(ink, top), contrastRatio(ink, bottom));
+  return worstFor(DARK_INK) >= worstFor(LIGHT_INK) ? DARK_INK : LIGHT_INK;
+}
 
 function applyAccentColors() {
   const root = document.documentElement.style;
   const a = state.settings.accentColor || "#C9A84C";
   const a2 = state.settings.accent2Color || "#B22222";
+  const accentDark = shadeColor(a, 0.68);
+  // Text-bearing accent gradients (the "Create" button, play button...)
+  // use a shallower darken factor than decorative-only accent-dark uses
+  // elsewhere. A wide gradient range means no single ink color can stay
+  // AA-legible across the whole thing — at the old 0.68 factor, even the
+  // default gold theme's gradient bottom only hit ~4:1 against dark ink,
+  // under the 4.5:1 minimum. Narrowing the range for text buttons keeps
+  // the visual gradient while leaving enough headroom for one ink color
+  // to read clearly end to end.
+  const accentTextDark = shadeColor(a, 0.85);
   root.setProperty("--accent", a);
-  root.setProperty("--accent-dark", shadeColor(a, 0.68));
+  root.setProperty("--accent-dark", accentDark);
+  root.setProperty("--accent-text-dark", accentTextDark);
   root.setProperty("--accent-dim", rgba(a, 0.33));
   root.setProperty("--ripple", rgba(a, 0.13));
   root.setProperty("--accent2", a2);
   root.setProperty("--accent2-dim", rgba(a2, 0.33));
+  // Ink color for anything painted with the accent gradient (the "Create"
+  // button, play button, selected-row checkmark, art-edit hover state...).
+  // See pickInkForStops() for why this checks contrast against BOTH ends
+  // of the (narrower) text gradient, not just the accent color.
+  const ink = pickInkForStops(a, accentTextDark);
+  root.setProperty("--accent-ink", ink);
   if (els.accentColorInput) { els.accentColorInput.value = a; els.accentColorHex.textContent = a.toUpperCase(); }
   if (els.accent2ColorInput) { els.accent2ColorInput.value = a2; els.accent2ColorHex.textContent = a2.toUpperCase(); }
 }
@@ -1809,6 +1986,131 @@ function applyThemeVideo() {
     layer.pause();
   }
 }
+/* ---------------------------------------------------------------------
+   "Spin to a Background" carousel — a coverflow-style alternative to
+   scrolling and clicking through the 42-theme grid. Cards sit in a ring
+   (index wraps end-to-end, so spinning past the last theme loops back
+   to the first, like slowly turning a small globe of previews) with the
+   centered card sharp and forward, and neighbors receding into a
+   shallow 3D arc to either side. The centered theme is previewed LIVE
+   behind the translucent shell as you browse — nothing is committed to
+   settings until "Use This Background" is tapped; closing without
+   confirming reverts to whatever was playing before the carousel opened.
+   --------------------------------------------------------------------- */
+const TC_THEME_EMOJI = {
+  none: "🚫", waves: "🌊", volcano: "🌋", sunset: "🌅", windmill: "🎐", waterfall: "💦", undersea: "🐠",
+  smoke: "💨", piano: "🎹", thinking: "🤔", aurora: "🌌", shark: "🦈", dog: "🐶", cat: "🐱",
+  sahara: "🏜️", darkness: "🌑", letter: "✉️", beach: "🏖️", jamaica: "🌴", reggaeton: "🔊",
+  firestorm: "🔥", galaxy: "🌠", zombie: "🧟", memoryLane: "📼", wildWest: "🤠", fantasyIsland: "🏝️",
+  arctic: "🧊", tsunami: "🌊", thunderstorm: "⛈️", skydiving: "🪂", moonWalk: "🌕", bar: "🍸",
+  fairytale: "🏰", witch: "🧙", romanceRnb: "💜", hiphop: "🎤", babylon: "🏛️", swordNight: "⚔️",
+  drStrange: "🌀", lotr: "💍", arcane: "⚡", starWars: "✨",
+};
+let tcItems = [], tcIndex = 0, tcPreviousTheme = null, tcCardEls = [];
+let tcDragStartX = null, tcDragStartIndex = 0, tcDragDeltaX = 0;
+
+/** Deterministic-but-varied gradient per theme, hashed from its id — no
+ *  need to actually render each of the 42 canvas themes into a thumbnail
+ *  just to tell the cards apart at a glance. */
+function tcCardGradient(id) {
+  let h = 0; for (let i = 0; i < id.length; i++) { h = (h * 31 + id.charCodeAt(i)) >>> 0; }
+  const hue = h % 360;
+  return `linear-gradient(155deg, hsl(${hue},62%,30%), hsl(${(hue + 46) % 360},70%,14%))`;
+}
+function tcBuildCards() {
+  tcCardEls = tcItems.map((t, i) => {
+    const card = document.createElement("div");
+    card.className = "tc-card"; card.dataset.tcIndex = String(i);
+    card.style.background = tcCardGradient(t.id);
+    card.innerHTML = `<div class="tc-emoji">${TC_THEME_EMOJI[t.id] || "✨"}</div><div class="tc-label">${t.label}</div>`;
+    return card;
+  });
+  els.tcTrack.innerHTML = "";
+  tcCardEls.forEach(c => els.tcTrack.appendChild(c));
+}
+/** Positions every card relative to the current center index using the
+ *  shortest signed distance around the ring (so the wrap-around never
+ *  visibly "unwinds" the long way), and only bothers rendering the
+ *  handful of cards actually near the visible window. */
+function tcRenderPositions() {
+  const n = tcItems.length;
+  tcCardEls.forEach((card, i) => {
+    let d = i - tcIndex;
+    if (d > n / 2) d -= n;
+    if (d < -n / 2) d += n;
+    if (Math.abs(d) > 4) { card.style.display = "none"; return; }
+    card.style.display = "flex";
+    const scale = Math.max(0.5, 1 - Math.abs(d) * 0.17);
+    card.style.transform = `translateX(${d * 108}px) translateZ(${-Math.abs(d) * 100}px) rotateY(${-d * 34}deg) scale(${scale})`;
+    card.style.opacity = String(Math.max(0, 1 - Math.abs(d) * 0.26));
+    card.style.zIndex = String(100 - Math.abs(d));
+    card.classList.toggle("tc-active", d === 0);
+  });
+  els.tcCurrentLabel.textContent = tcItems[tcIndex].label;
+}
+/** Moves the centered card to `idx` (wrapping around the ring) and
+ *  swaps the LIVE animated background behind the carousel to preview
+ *  it immediately — nothing is saved to settings until confirmed. */
+function tcGoTo(idx) {
+  const n = tcItems.length;
+  tcIndex = ((idx % n) + n) % n;
+  tcRenderPositions();
+  window.VV.ThemeEngine.setTheme(tcItems[tcIndex].id);
+}
+function openThemeCarousel() {
+  tcPreviousTheme = state.settings.themeId;
+  tcItems = window.VV.ThemeEngine.THEME_LIST;
+  const startIdx = Math.max(0, tcItems.findIndex(t => t.id === state.settings.themeId));
+  tcBuildCards();
+  tcIndex = startIdx;
+  tcRenderPositions();
+  window.VV.ThemeEngine.setTheme(tcItems[tcIndex].id);
+  els.themeCarouselOverlay.classList.add("open");
+}
+function closeThemeCarousel(commit) {
+  if (commit) {
+    state.settings.themeId = tcItems[tcIndex].id;
+    applySettingsToUI(); saveSettings(); renderThemeGrid();
+    toast(`Background: ${tcItems[tcIndex].label}`);
+  } else {
+    window.VV.ThemeEngine.setTheme(tcPreviousTheme);
+  }
+  els.themeCarouselOverlay.classList.remove("open");
+}
+els.openThemeCarouselBtn.addEventListener("click", openThemeCarousel);
+els.tcCloseBtn.addEventListener("click", () => closeThemeCarousel(false));
+els.themeCarouselOverlay.addEventListener("click", (e) => { if (e.target === els.themeCarouselOverlay) closeThemeCarousel(false); });
+els.tcConfirmBtn.addEventListener("click", () => closeThemeCarousel(true));
+els.tcPrevBtn.addEventListener("click", () => tcGoTo(tcIndex - 1));
+els.tcNextBtn.addEventListener("click", () => tcGoTo(tcIndex + 1));
+els.tcTrack.addEventListener("click", (e) => {
+  if (Math.abs(tcDragDeltaX) > 6) return; // was a drag, not a tap
+  const card = e.target.closest(".tc-card");
+  if (!card) return;
+  tcGoTo(Number(card.dataset.tcIndex));
+});
+document.addEventListener("keydown", (e) => {
+  if (!els.themeCarouselOverlay.classList.contains("open")) return;
+  if (e.key === "ArrowLeft") tcGoTo(tcIndex - 1);
+  else if (e.key === "ArrowRight") tcGoTo(tcIndex + 1);
+  else if (e.key === "Escape") closeThemeCarousel(false);
+  else if (e.key === "Enter") closeThemeCarousel(true);
+});
+// Drag / swipe to spin the carousel — one card per ~90px dragged,
+// snapping to the nearest whole card on release.
+els.tcTrack.addEventListener("pointerdown", (e) => {
+  tcDragStartX = e.clientX; tcDragStartIndex = tcIndex; tcDragDeltaX = 0;
+  els.tcTrack.setPointerCapture(e.pointerId);
+});
+els.tcTrack.addEventListener("pointermove", (e) => {
+  if (tcDragStartX === null) return;
+  tcDragDeltaX = e.clientX - tcDragStartX;
+  const proposed = tcDragStartIndex - Math.round(tcDragDeltaX / 90);
+  if (proposed !== tcIndex) tcGoTo(proposed);
+});
+els.tcTrack.addEventListener("pointerup", () => { tcDragStartX = null; });
+els.tcTrack.addEventListener("pointercancel", () => { tcDragStartX = null; });
+
 /** Maps Settings → "Now Playing Overlay Strength" (0-100) onto the CSS
  *  variables the full player's scrim and the song-title/artist text
  *  shadows read from, so the details stay legible whether the chosen

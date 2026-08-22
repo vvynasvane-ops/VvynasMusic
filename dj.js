@@ -5,7 +5,7 @@
    ========================================================================= */
 (() => {
 "use strict";
-const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, C, linGrad, radGrad } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, AUDIO_EXT, C, linGrad, radGrad } = window.VV;
 
 /** Same art priority as the main library: a custom uploaded photo, then
  *  the song's own embedded cover (cached in IndexedDB the first time the
@@ -22,7 +22,6 @@ async function deckArtUrl(song) {
   return generatedArt(song.title + song.artist + song.id, 120);
 }
 
-const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
 function titleCaseFromFilename(name) {
   const noExt = name.replace(AUDIO_EXT, "");
   const cleaned = noExt.replace(/[_]+/g, " ").trim();

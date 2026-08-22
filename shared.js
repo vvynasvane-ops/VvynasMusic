@@ -677,6 +677,20 @@ async function walkDirectory(dirHandle, extRegex, onProgress) {
 }
 
 /* ---------------------------------------------------------------------
+   Recognized audio file extensions — the single source of truth for
+   which files count as "a song" anywhere files are scanned (main
+   library folder scan, DJ Mode's folder scan, the <input webkitdirectory>
+   fallback picker). Deliberately broad: covers every mainstream audio
+   container/codec a user is likely to have on device, not just the
+   handful iTunes/Spotify default to, so nothing gets silently skipped
+   during a folder scan just because its extension wasn't on a short
+   allowlist. Whether a given file then actually *plays* still depends on
+   the browser/OS having a decoder for its codec — playSong below now
+   catches that case and skips forward with a toast instead of just
+   silently stalling. */
+const AUDIO_EXT = /\.(mp3|mp2|m4a|m4b|m4p|m4r|aac|wav|wave|flac|ogg|oga|ogx|opus|weba|webm|wma|aiff|aif|aifc|amr|mka|caf|3gp|3g2|3ga|spx|ape|mpc|tta|wv|au|snd|mid|midi)$/i;
+
+/* ---------------------------------------------------------------------
    Small canvas-drawing helpers mirroring the Android Canvas/Paint API
    used throughout AnimatedThemeView.java, so every theme below reads
    like a direct port of its Java counterpart.
@@ -1595,8 +1609,9 @@ const GlobeTitle = (function () {
    --------------------------------------------------------------------- */
 global.VV = {
   idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut,
+  openDB,
   FONTS, applyFont,
-  fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
+  fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, AUDIO_EXT,
   ThemeEngine, PixieDust, BookTransition, GlobeTitle,
   C, linGrad, radGrad, fillGrad,
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
