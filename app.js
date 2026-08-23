@@ -45,7 +45,7 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
-  settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55 },
+  settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55, songListOverlay: 40 },
   usingFSApi: false,
   fileRefs: new Map(),   // songId -> File or FileSystemFileHandle
   objectUrl: null,
@@ -152,6 +152,8 @@ const els = {
   settingsRescanBtn: $("#settingsRescanBtn"),
   overlayStrengthInput: $("#overlayStrengthInput"),
   overlayStrengthValue: $("#overlayStrengthValue"),
+  songListOverlayInput: $("#songListOverlayInput"),
+  songListOverlayValue: $("#songListOverlayValue"),
 
   iosModalOverlay: $("#iosModalOverlay"),
   closeIosModalBtn: $("#closeIosModalBtn"),
@@ -1767,6 +1769,7 @@ function applySettingsToUI() {
   applyRageDripType();
   applyThemeVideo();
   applyOverlayStrength();
+  applySongListOverlay();
   RageMode.setActive(state.settings.rageMode);
   renderFontGrid();
   renderThemeGrid();
@@ -2143,6 +2146,22 @@ function applyOverlayStrength() {
     els.overlayStrengthInput.value = String(v);
   }
 }
+
+/** Maps Settings → "Song List Darkness" (0-100) onto the CSS variable the
+ *  library scroll area reads for its own tint, laid directly behind the
+ *  song rows on the Library/Favorites/Recent/Folder lists — independent
+ *  of the Now Playing overlay above, since a busy animated theme can make
+ *  song titles hard to read even when nothing is playing yet.
+ *  0 = background fully visible behind the list, 100 = list panel near-black. */
+function applySongListOverlay() {
+  const v = state.settings.songListOverlay ?? 40;
+  const t = Math.max(0, Math.min(100, v)) / 100;
+  document.documentElement.style.setProperty("--songlist-overlay-a", (t * 0.92).toFixed(2));
+  if (els.songListOverlayValue) els.songListOverlayValue.textContent = v + "%";
+  if (els.songListOverlayInput && Number(els.songListOverlayInput.value) !== v) {
+    els.songListOverlayInput.value = String(v);
+  }
+}
 function openSettings() { els.settingsModalOverlay.classList.add("open"); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
 function closeSettings() { els.settingsModalOverlay.classList.remove("open"); }
 
@@ -2263,6 +2282,11 @@ els.overlayStrengthInput.addEventListener("input", () => {
   applyOverlayStrength();
 });
 els.overlayStrengthInput.addEventListener("change", saveSettings);
+els.songListOverlayInput.addEventListener("input", () => {
+  state.settings.songListOverlay = Number(els.songListOverlayInput.value);
+  applySongListOverlay();
+});
+els.songListOverlayInput.addEventListener("change", saveSettings);
 document.getElementById("rageBgGrid").addEventListener("click", (e) => {
   const removeBtn = e.target.closest("[data-remove-custom-bg]");
   if (removeBtn) { e.stopPropagation(); removeCustomBgImage(); return; }
