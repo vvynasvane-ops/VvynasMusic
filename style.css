@@ -464,7 +464,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   padding: 24px; text-align: center;
 }
 .onboarding-card { max-width: 420px; }
-.onboarding .sigil-lg { width: 84px; height: 84px; margin: 0 auto 22px; filter: drop-shadow(0 0 18px var(--accent-dim)); animation: sigilFloat 5s ease-in-out infinite; }
+.onboarding .sigil-lg { width: 84px; height: 84px; margin: 0 auto 22px; animation: sigilFloat 5s ease-in-out infinite; }
 @keyframes sigilFloat { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-8px);} }
 .onboarding h1 { font-family: var(--font-display); font-size: 26px; color: var(--accent); margin: 0 0 10px; letter-spacing: .03em; }
 .onboarding p { font-family: var(--font-serif); font-size: 17px; color: var(--text-secondary); line-height: 1.55; margin: 0 0 26px; }
@@ -488,7 +488,6 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 .btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-
 
 /* ---------- Song rows / grid ---------- */
 .section-label {

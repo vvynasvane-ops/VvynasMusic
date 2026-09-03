@@ -7,11 +7,24 @@
 <meta name="description" content="Your local music library, reborn on the web.">
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+<!-- Favicon: vector first (crisp at every size, modern browsers), with
+     raster fallbacks for browsers/contexts that don't support SVG icons. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icon-16.png" sizes="16x16" type="image/png">
+<link rel="shortcut icon" href="favicon.ico">
+
+<!-- iOS "Add to Home Screen" — Safari only ever reads apple-touch-icon,
+     never the manifest, so this is required for the icon to appear there. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Vvynas Vane">
-<link rel="icon" href="favi.jpeg">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -44,12 +57,7 @@
   <!-- ============ ONBOARDING ============ -->
   <div class="onboarding" id="onboarding">
     <div class="onboarding-card" id="onboardingCard">
-      <svg class="sigil-lg" viewBox="0 0 100 100" fill="none">
-        <circle cx="50" cy="50" r="46" stroke="#C9A84C" stroke-width="2.4"/>
-        <circle cx="50" cy="50" r="38" stroke="#8A6E2A" stroke-width="1"/>
-        <polygon points="50,20 71,50 50,80 29,50" fill="#C9A84C"/>
-        <circle cx="50" cy="50" r="9.5" fill="#B22222"/>
-      </svg>
+      <img class="sigil-lg" src="favicon.svg" alt="Vvynas Vane" width="100" height="100">
       <h1>Vvynas Vane</h1>
       <p>Your library, reborn on the web. Grant access to a music folder on this device and it plays entirely offline, in your browser — nothing is ever uploaded.</p>
       <button class="btn-primary" id="grantAccessBtn">
