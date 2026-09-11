@@ -114,6 +114,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
           Recently Played <span class="count" id="navRecentCount"></span>
         </button></li>
+        <li><button class="nav-item" data-view="external">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg>
+          External <span class="count" id="navExternalCount"></span>
+        </button></li>
       </ul>
 
       <ul class="nav-list" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--divider);">
@@ -189,6 +193,8 @@
         <section id="view-favorites" class="hidden"></section>
         <!-- Recently Played (default system playlist) -->
         <section id="view-recent" class="hidden"></section>
+        <!-- External playlists (YouTube playlist/channel embeds) -->
+        <section id="view-external" class="hidden"></section>
       </div>
     </main>
   </div>
@@ -290,7 +296,7 @@
   <!-- ============ ADD TO PLAYLIST MODAL ============ -->
   <div class="modal-overlay" id="playlistModalOverlay">
     <div class="modal">
-      <h3>Add to Playlist</h3>
+      <h3 id="playlistModalTitle">Add to Playlist</h3>
       <div id="playlistPickList"></div>
       <button class="btn-secondary" id="newPlaylistFromModalBtn" style="margin-top:14px;">+ New Playlist</button>
       <div class="modal-actions"><button class="btn-secondary" id="closePlaylistModalBtn" style="margin-top:0;">Close</button></div>

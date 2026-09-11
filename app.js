@@ -52,6 +52,7 @@ const state = {
   artCache: new Map(),   // unused (kept for backward compat with any external references)
   customArt: new Map(),  // songId -> custom album art data URL (uploaded from device), see loadUserData
   embeddedArt: new Map(), // songId -> the song file's own cover art, extracted from its tag (see loadUserData / loadMetadataProgressively)
+  externalPlaylists: [], // {id, name, type: "playlist"|"channel"|"search", embedId?, query?} — see parseYouTubeInput
 };
 
 const audio = new Audio();
@@ -84,6 +85,7 @@ const els = {
   viewFolderDetail: $("#view-folder-detail"),
   viewFavorites: $("#view-favorites"),
   viewRecent: $("#view-recent"),
+  viewExternal: $("#view-external"),
   storageLabel: $("#storageLabel"),
   rescanBtn: $("#rescanBtn"),
   installSidebarBtn: $("#installSidebarBtn"),
@@ -131,6 +133,7 @@ const els = {
   queueList: $("#queueList"),
 
   playlistModalOverlay: $("#playlistModalOverlay"),
+  playlistModalTitle: $("#playlistModalTitle"),
   playlistPickList: $("#playlistPickList"),
   newPlaylistFromModalBtn: $("#newPlaylistFromModalBtn"),
   closePlaylistModalBtn: $("#closePlaylistModalBtn"),
@@ -1047,7 +1050,7 @@ function finishOnboarding() {
    Persisted user data: playlists / favorites / play counts / settings
    --------------------------------------------------------------------- */
 async function loadUserData() {
-  const [playlists, favKeys, pcEntries, settings, recent, customBgBlob, customArtEntries, embeddedArtEntries, customBgVideoBlob] = await Promise.all([
+  const [playlists, favKeys, pcEntries, settings, recent, customBgBlob, customArtEntries, embeddedArtEntries, customBgVideoBlob, externalPlaylists] = await Promise.all([
     idbGetAll("playlists"),
     idbGetAllKeys("favorites"),
     (async () => {
@@ -1070,11 +1073,13 @@ async function loadUserData() {
     idbGetAllEntries("customArt"),
     idbGetAllEntries("embeddedArt"),
     idbGet("kv", "customBgVideo"),
+    idbGet("kv", "externalPlaylists"),
   ]);
   state.playlists = playlists || [];
   state.favorites = new Set(favKeys || []);
   state.playCounts = new Map(pcEntries || []);
   state.recentlyPlayed = recent || [];
+  state.externalPlaylists = externalPlaylists || [];
   state.customArt = new Map(customArtEntries || []);
   state.embeddedArt = new Map(embeddedArtEntries || []);
   // Re-derive an object URL for the uploaded background photo, if any —
@@ -1175,12 +1180,234 @@ async function renamePlaylist(playlistId, newName) {
   await idbPut("playlists", pl);
   render();
 }
+async function addSongsToPlaylist(playlistId, songIds) {
+  const pl = state.playlists.find(p => p.id === playlistId);
+  if (!pl) return;
+  let added = 0;
+  songIds.forEach(id => { if (!pl.songIds.includes(id)) { pl.songIds.push(id); added++; } });
+  if (added) await idbPut("playlists", pl);
+  toast(added ? `Added ${added} song${added === 1 ? "" : "s"} to "${pl.name}"` : "Already in that playlist");
+}
 async function removeSongsFromPlaylist(playlistId, songIds) {
   const pl = state.playlists.find(p => p.id === playlistId);
   if (!pl) return;
   const remove = new Set(songIds);
   pl.songIds = pl.songIds.filter(id => !remove.has(id));
   await idbPut("playlists", pl);
+  render();
+}
+
+/* ---------------------------------------------------------------------
+   External playlists — connect an outside playlist from pretty much any
+   embeddable source and play it right here via an iframe (or a native
+   <audio> element for direct streams). No backend, no API keys:
+     • YouTube      → playlist/channel link or ID → exact embed;
+                       channel ID is converted UC…→UU… to reach its
+                       public "uploads" playlist (a real, documented
+                       trick, no Data API needed)
+     • Spotify      → open.spotify.com or spotify: URI for a playlist,
+                       album, track, artist, show or episode → the
+                       public open.spotify.com/embed/… player
+     • SoundCloud   → any soundcloud.com URL (track, set, or profile)
+                       passed straight into SoundCloud's public widget
+     • Apple Music  → any music.apple.com link → swapped to
+                       embed.music.apple.com, Apple's public embed host
+     • Deezer       → deezer.com playlist/album/artist/track link →
+                       Deezer's public widget.deezer.com player
+     • Mixcloud     → any mixcloud.com show/playlist/artist link → its
+                       public widget iframe
+     • Direct audio → a raw .mp3/.m4a/.aac/.ogg/.opus/.wav/.flac link,
+                       or any stream URL when "Direct audio link" is
+                       picked explicitly → a native <audio> player
+                       (great for internet radio / self-hosted files)
+     • Custom       → paste any other site's own "Embed" <iframe> code
+                       (Bandcamp, Twitch, a podcast player, etc.) and
+                       its src is lifted straight into the card; a bare
+                       link no other rule recognizes is tried as-is too
+   None of these need a key because each platform already exposes a
+   public, embeddable player for its own content — the only thing that
+   can't be done client-side without a real API key is resolving a bare
+   *name* to an exact ID, so a name only gets a live embed on YouTube
+   (its search embed is public); elsewhere a bare name becomes a
+   "search there, then paste the link back" card instead of guessing.
+   --------------------------------------------------------------------- */
+const SOURCE_META = {
+  youtube:    { label: "YouTube" },
+  spotify:    { label: "Spotify" },
+  soundcloud: { label: "SoundCloud" },
+  applemusic: { label: "Apple Music" },
+  deezer:     { label: "Deezer" },
+  mixcloud:   { label: "Mixcloud" },
+  stream:     { label: "Direct Audio" },
+  custom:     { label: "Custom Embed" },
+};
+const EMBED_FIXED_HEIGHT = { spotify: 380, soundcloud: 300, applemusic: 450, deezer: 300, mixcloud: 120 };
+
+function tryUrl(input) {
+  try { return new URL(/^https?:\/\//i.test(input) ? input : "https://" + input); } catch { return null; }
+}
+function normalizeUrl(input) {
+  const t = input.trim();
+  return /^https?:\/\//i.test(t) ? t : "https://" + t;
+}
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+function detectSource(raw) {
+  if (/<iframe[^>]*\ssrc=/i.test(raw)) return "custom";
+  if (/spotify\.com|^spotify:/i.test(raw)) return "spotify";
+  if (/soundcloud\.com/i.test(raw)) return "soundcloud";
+  if (/music\.apple\.com/i.test(raw)) return "applemusic";
+  if (/deezer\.com/i.test(raw)) return "deezer";
+  if (/mixcloud\.com/i.test(raw)) return "mixcloud";
+  if (/\.(mp3|m4a|aac|ogg|opus|wav|flac)(\?|#|$)/i.test(raw)) return "stream";
+  if (/youtube\.com|youtu\.be/i.test(raw)) return "youtube";
+  if (/^https?:\/\//i.test(raw.trim())) return "custom";
+  return "youtube"; // bare text with no recognizable domain — YouTube is the only source with a public search embed
+}
+
+function parseYouTubeInput(raw) {
+  const input = (raw || "").trim();
+  if (/youtube\.com|youtu\.be/i.test(input)) {
+    const url = tryUrl(input);
+    if (url) {
+      const listParam = url.searchParams.get("list");
+      if (listParam) return { type: /^UU/.test(listParam) ? "channel" : "playlist", embedId: listParam };
+      const chMatch = url.pathname.match(/\/channel\/(UC[\w-]{10,})/);
+      if (chMatch) return { type: "channel", embedId: "UU" + chMatch[1].slice(2) };
+      const handleMatch = url.pathname.match(/\/(?:@|c\/|user\/)([^/?#]+)/);
+      if (handleMatch) return { type: "search", query: decodeURIComponent(handleMatch[1]).replace(/^@/, "") };
+    }
+  }
+  if (/^(PL|UU|LL|FL|OLAK5uy_)[\w-]{10,}$/.test(input)) return { type: input.startsWith("UU") ? "channel" : "playlist", embedId: input };
+  if (/^UC[\w-]{10,}$/.test(input)) return { type: "channel", embedId: "UU" + input.slice(2) };
+  return { type: "search", query: input.replace(/^@/, "") };
+}
+function parseSpotifyInput(input) {
+  let kind = null, id = null;
+  const uriMatch = input.match(/^spotify:(playlist|album|track|artist|show|episode):([A-Za-z0-9]+)/i);
+  if (uriMatch) { kind = uriMatch[1].toLowerCase(); id = uriMatch[2]; }
+  else {
+    const url = tryUrl(input);
+    const m = url && url.pathname.match(/\/(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/i);
+    if (m) { kind = m[1].toLowerCase(); id = m[2]; }
+  }
+  return id ? { type: "embed", kind, embedId: id } : { type: "search", query: input };
+}
+function parseSoundcloudInput(input) {
+  const url = tryUrl(input);
+  return (url && /soundcloud\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseAppleMusicInput(input) {
+  const url = tryUrl(input);
+  return (url && /music\.apple\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseDeezerInput(input) {
+  const url = tryUrl(input);
+  const m = url && url.pathname.match(/\/(playlist|album|artist|track)\/(\d+)/i);
+  return m ? { type: "embed", kind: m[1].toLowerCase(), embedId: m[2] } : { type: "search", query: input };
+}
+function parseMixcloudInput(input) {
+  const url = tryUrl(input);
+  return (url && /mixcloud\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseCustomInput(input) {
+  const iframeMatch = input.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+  const extracted = iframeMatch ? iframeMatch[1] : (/^https?:\/\//i.test(input.trim()) ? input.trim() : null);
+  if (!extracted) return { type: "search", query: input };
+  const redetected = detectSource(extracted);
+  if (redetected !== "custom") return { source: redetected, ...buildSourceItem(extracted, redetected) };
+  return { type: "embed", url: extracted };
+}
+function buildSourceItem(input, source) {
+  switch (source) {
+    case "spotify": return parseSpotifyInput(input);
+    case "soundcloud": return parseSoundcloudInput(input);
+    case "applemusic": return parseAppleMusicInput(input);
+    case "deezer": return parseDeezerInput(input);
+    case "mixcloud": return parseMixcloudInput(input);
+    case "stream": return { type: "audio", url: normalizeUrl(input) };
+    case "custom": return parseCustomInput(input);
+    case "youtube": default: return parseYouTubeInput(input);
+  }
+}
+function buildExternalItem(raw, forcedSource) {
+  const input = raw.trim();
+  const source = (forcedSource && forcedSource !== "auto") ? forcedSource : detectSource(input);
+  return { source, ...buildSourceItem(input, source) };
+}
+
+function externalSearchUrl(source, query) {
+  const q = encodeURIComponent(query);
+  switch (source) {
+    case "youtube": return `https://www.youtube.com/results?search_query=${q}`;
+    case "spotify": return `https://open.spotify.com/search/${q}`;
+    case "soundcloud": return `https://soundcloud.com/search?q=${q}`;
+    case "applemusic": return `https://music.apple.com/search?term=${q}`;
+    case "deezer": return `https://www.deezer.com/search/${q}`;
+    case "mixcloud": return `https://www.mixcloud.com/search/?q=${q}`;
+    default: return null;
+  }
+}
+function buildEmbed(item) {
+  const source = item.source || "youtube";
+  switch (source) {
+    case "youtube":
+      return item.type === "search"
+        ? { embedSrc: `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(item.query)}`, openHref: externalSearchUrl("youtube", item.query) }
+        : { embedSrc: `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(item.embedId)}`, openHref: `https://www.youtube.com/playlist?list=${encodeURIComponent(item.embedId)}` };
+    case "spotify":
+      return item.type === "embed"
+        ? { embedSrc: `https://open.spotify.com/embed/${item.kind}/${item.embedId}?utm_source=generator&theme=0`, openHref: `https://open.spotify.com/${item.kind}/${item.embedId}` }
+        : { embedSrc: null, openHref: externalSearchUrl("spotify", item.query) };
+    case "soundcloud":
+      return item.type === "embed"
+        ? { embedSrc: `https://w.soundcloud.com/player/?url=${encodeURIComponent(item.url)}&color=%23b98bff&auto_play=false&show_user=true&visual=false`, openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("soundcloud", item.query) };
+    case "applemusic":
+      return item.type === "embed"
+        ? { embedSrc: item.url.replace("music.apple.com", "embed.music.apple.com"), openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("applemusic", item.query) };
+    case "deezer":
+      return item.type === "embed"
+        ? { embedSrc: `https://widget.deezer.com/widget/dark/${item.kind}/${item.embedId}`, openHref: `https://www.deezer.com/${item.kind}/${item.embedId}` }
+        : { embedSrc: null, openHref: externalSearchUrl("deezer", item.query) };
+    case "mixcloud":
+      return item.type === "embed"
+        ? { embedSrc: `https://www.mixcloud.com/widget/iframe/?hide_cover=1&light=1&feed=${encodeURIComponent(item.url)}`, openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("mixcloud", item.query) };
+    case "stream":
+      return { embedSrc: item.url, openHref: item.url, isAudio: true };
+    case "custom":
+      return item.type === "embed" ? { embedSrc: item.url, openHref: item.url } : { embedSrc: null, openHref: null };
+    default:
+      return { embedSrc: null, openHref: null };
+  }
+}
+
+async function saveExternalPlaylists() { await idbSet("kv", "externalPlaylists", state.externalPlaylists); }
+async function addExternalPlaylist() {
+  const nameEl = document.getElementById("externalPlaylistNameInput");
+  const inputEl = document.getElementById("externalPlaylistInput");
+  const sourceEl = document.getElementById("externalPlaylistSourceSelect");
+  if (!inputEl) return;
+  const raw = inputEl.value;
+  if (!raw.trim()) { toast("Paste a link, ID, or name first"); return; }
+  const parsed = buildExternalItem(raw, sourceEl ? sourceEl.value : "auto");
+  const meta = SOURCE_META[parsed.source] || SOURCE_META.youtube;
+  const customName = nameEl && nameEl.value.trim();
+  const fallbackName = parsed.type === "search" ? (parsed.query || meta.label)
+    : parsed.kind ? `${meta.label} ${capitalize(parsed.kind)}` : meta.label;
+  const item = { id: "ext_" + Date.now().toString(36), name: customName || fallbackName, ...parsed };
+  state.externalPlaylists.push(item);
+  await saveExternalPlaylists();
+  inputEl.value = "";
+  if (nameEl) nameEl.value = "";
+  render();
+  toast(parsed.type === "embed" || parsed.type === "audio" ? `${meta.label} connected` : `Added — open it on ${meta.label} and paste the exact link for a full embed`);
+}
+async function removeExternalPlaylist(id) {
+  state.externalPlaylists = state.externalPlaylists.filter(p => p.id !== id);
+  await saveExternalPlaylists();
   render();
 }
 
@@ -1260,25 +1487,30 @@ function emptyStateHtml(title, sub, iconPath) {
 function renderSongsView() {
   const list = visibleSongs(state.songs);
   els.viewSongs.innerHTML = list.length
-    ? `<div class="section-label">${list.length} Song${list.length === 1 ? "" : "s"}</div>` +
-      list.map((s, i) => songRowHtml(s, i)).join("")
+    ? `<div class="section-label">${list.length} Song${list.length === 1 ? "" : "s"}${selectToggleBtnHtml()}</div>` +
+      selectToolbarHtml(list.length, { showRemove: false }) +
+      list.map((s, i) => songRowHtml(s, i, { selectable: true })).join("")
     : emptyStateHtml("No songs yet", "Grant access to a folder with audio files to build your library.",
         '<path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/>');
 }
 
 /* ---------------------------------------------------------------------
-   Multi-select toolbar — shared by Favorites, Recently Played, and
-   individual Playlists, since "select all + remove" means something
-   slightly different in each (un-favorite / forget / remove-from-list).
+   Multi-select toolbar — shared by the Library, Folders, Favorites,
+   Recently Played, and individual Playlists. "Add to Playlist" always
+   applies; "Remove" means something different per context (un-favorite /
+   forget history / remove-from-list) and is hidden where there's nothing
+   sensible to remove (Library, Folder detail — songs live on disk).
    --------------------------------------------------------------------- */
-function selectToolbarHtml(totalCount) {
+function selectToolbarHtml(totalCount, opts = {}) {
   const n = state.selectedIds.size;
   if (!state.selectMode) return "";
+  const showRemove = opts.showRemove !== false;
   return `
   <div class="select-toolbar">
     <button data-action="select-all">${n === totalCount && totalCount > 0 ? "Deselect All" : "Select All"}</button>
     <span class="count">${n} selected</span>
-    <button class="remove-selected-btn" data-action="remove-selected" ${n === 0 ? "disabled" : ""}>Remove</button>
+    <button class="add-selected-btn" data-action="add-selected-to-playlist" ${n === 0 ? "disabled" : ""}>Add to Playlist</button>
+    ${showRemove ? `<button class="remove-selected-btn" data-action="remove-selected" ${n === 0 ? "disabled" : ""}>Remove</button>` : ""}
     <button data-action="cancel-select">Cancel</button>
   </div>`;
 }
@@ -1330,8 +1562,9 @@ function renderFolderDetail(folderPath) {
   const list = visibleSongs(state.songs.filter(s => ids.includes(s.id)));
   els.viewFolderDetail.innerHTML = `
     <button class="btn-secondary" style="width:auto;display:inline-flex;margin-bottom:16px;" data-action="back-folders">← All Folders</button>
-    <div class="section-label">${escapeHtml(folderPath.split("/").pop() || folderPath)}</div>
-    ${list.map((s, i) => songRowHtml(s, i)).join("") || emptyStateHtml("Empty folder", "", '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>')}
+    <div class="section-label">${escapeHtml(folderPath.split("/").pop() || folderPath)}${list.length ? selectToggleBtnHtml() : ""}</div>
+    ${selectToolbarHtml(list.length, { showRemove: false })}
+    ${list.length ? list.map((s, i) => songRowHtml(s, i, { selectable: true })).join("") : emptyStateHtml("Empty folder", "", '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>')}
   `;
 }
 
@@ -1346,6 +1579,11 @@ function renderPlaylistsView() {
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
       <div class="name">Recently Played</div>
       <div class="n">${recentCount} song${recentCount === 1 ? "" : "s"}</div>
+    </div>
+    <div class="playlist-card external-card-link" data-view-jump="external">
+      <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg></div>
+      <div class="name">External Playlists</div>
+      <div class="n">${state.externalPlaylists.length ? state.externalPlaylists.length + " connected" : "YouTube &amp; more"}</div>
     </div>
     ${state.playlists.map(pl => `
     <div class="playlist-card" data-playlist="${pl.id}">
@@ -1402,19 +1640,82 @@ function playlistRowHtml(song, index, playlistId) {
   </div>`;
 }
 
+function externalCardHtml(item) {
+  const source = item.source || "youtube";
+  const meta = SOURCE_META[source] || SOURCE_META.custom;
+  const { embedSrc, openHref, isAudio } = buildEmbed(item);
+  const fixedH = EMBED_FIXED_HEIGHT[source];
+  const noEmbed = !embedSrc;
+  return `
+  <div class="external-card">
+    <div class="external-card-head">
+      <div class="name">${escapeHtml(item.name)}<span class="ext-badge ext-badge-${source}">${meta.label}</span></div>
+      <div class="ext-actions">
+        ${openHref ? `<a class="icon-btn" href="${openHref}" target="_blank" rel="noopener noreferrer" title="Open externally">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
+        </a>` : ""}
+        <button class="icon-btn" data-action="remove-external" data-id="${item.id}" title="Remove">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+    </div>
+    ${item.type === "search" && source === "youtube" ? `<div class="ext-note">Best-effort YouTube search results for “${escapeHtml(item.query)}” — this isn't guaranteed to be the exact channel or playlist. Open it in YouTube to confirm, then paste the real playlist link back here (above) for a precise, permanent embed.</div>` : ""}
+    ${noEmbed ? `<div class="ext-note">${meta.label} doesn't support an embeddable live search here. ${openHref ? `Use the open button to search ${meta.label} directly, then paste the exact playlist/track/album link back here for a full player.` : "Paste a working link or an &lt;iframe&gt; embed code for this to play here."}</div>` : ""}
+    ${embedSrc ? (isAudio
+      ? `<audio controls preload="none" src="${embedSrc}" style="width:100%;"></audio>`
+      : fixedH
+        ? `<div class="external-embed-wrap fixed" style="height:${fixedH}px;"><iframe src="${embedSrc}" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="${escapeHtml(item.name)}"></iframe></div>`
+        : `<div class="external-embed-wrap"><iframe src="${embedSrc}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen title="${escapeHtml(item.name)}"></iframe></div>`
+    ) : ""}
+  </div>`;
+}
+function renderExternalView() {
+  const list = state.externalPlaylists;
+  els.viewExternal.innerHTML = `
+    <div class="section-label">External Playlists</div>
+    <div class="external-add-row">
+      <select id="externalPlaylistSourceSelect" title="Source">
+        <option value="auto">Auto-detect</option>
+        <option value="youtube">YouTube</option>
+        <option value="spotify">Spotify</option>
+        <option value="soundcloud">SoundCloud</option>
+        <option value="applemusic">Apple Music</option>
+        <option value="deezer">Deezer</option>
+        <option value="mixcloud">Mixcloud</option>
+        <option value="stream">Direct audio link</option>
+        <option value="custom">Custom embed / other</option>
+      </select>
+      <input type="text" id="externalPlaylistNameInput" placeholder="Name (optional)" maxlength="60">
+      <input type="text" id="externalPlaylistInput" placeholder="Paste a link, a stream URL, an &lt;iframe&gt; embed code, or a name to search…" maxlength="500">
+      <button class="btn-primary" style="margin-top:0;" data-action="add-external">Add</button>
+    </div>
+    <p class="external-hint">Paste a playlist, album, track or channel link from <strong>YouTube</strong>, <strong>Spotify</strong>,
+      <strong>SoundCloud</strong>, <strong>Apple Music</strong>, <strong>Deezer</strong> or <strong>Mixcloud</strong> and it plays
+      right here. A direct audio link (.mp3, .m4a, .ogg, .flac — internet radio, self-hosted files) gets a native player. Anything
+      else — Bandcamp, Twitch, a podcast, whatever else has its own "Embed" option — paste that site's &lt;iframe&gt; code and it
+      drops straight in. Typing just a name searches YouTube live, the only source here with a public search embed; for other
+      platforms, search there first and paste the exact link back. Nothing here touches your local library.</p>
+    ${list.length ? list.map(externalCardHtml).join("") : emptyStateHtml("No external playlists yet",
+      "Connect a playlist from YouTube, Spotify, SoundCloud, Apple Music, Deezer, Mixcloud, a direct audio stream, or any other embeddable source above.",
+      '<path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/>')}
+  `;
+}
+
 function updateNavCounts() {
   $("#navSongsCount").textContent = state.songs.length || "";
   $("#navPlaylistsCount").textContent = state.playlists.length || "";
   $("#navFoldersCount").textContent = state.foldersMap.size || "";
   $("#navFavoritesCount").textContent = state.favorites.size || "";
   $("#navRecentCount").textContent = state.recentlyPlayed.length || "";
+  const navExternalCount = $("#navExternalCount");
+  if (navExternalCount) navExternalCount.textContent = state.externalPlaylists.length || "";
   updateRavensLine();
 }
 
 function render() {
   updateNavCounts();
   const v = state.currentView;
-  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent]
+  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent, els.viewExternal]
     .forEach(el => el.classList.add("hidden"));
 
   if (v === "songs") { els.viewSongs.classList.remove("hidden"); renderSongsView(); els.viewTitle.textContent = "Library"; }
@@ -1424,6 +1725,7 @@ function render() {
   else if (v === "folder-detail") { els.viewFolderDetail.classList.remove("hidden"); renderFolderDetail(state.currentFolder); els.viewTitle.textContent = "Folder"; }
   else if (v === "favorites") { els.viewFavorites.classList.remove("hidden"); renderFavoritesView(); els.viewTitle.textContent = "Favorites"; }
   else if (v === "recent") { els.viewRecent.classList.remove("hidden"); renderRecentView(); els.viewTitle.textContent = "Recently Played"; }
+  else if (v === "external") { els.viewExternal.classList.remove("hidden"); renderExternalView(); els.viewTitle.textContent = "External Playlists"; }
 
   els.contentScroll.scrollTop = render._lastView === v ? els.contentScroll.scrollTop : 0;
   render._lastView = v;
@@ -1723,8 +2025,13 @@ function closeQueue() { els.sheetOverlay.classList.remove("open"); els.queueShee
 /* ---------------------------------------------------------------------
    Add-to-playlist / new-playlist modals
    --------------------------------------------------------------------- */
-function openPlaylistModal(songId) {
-  state.addToPlaylistTargetId = songId;
+function openPlaylistModal(songIdOrIds) {
+  state.addToPlaylistTargetId = songIdOrIds;
+  if (els.playlistModalTitle) {
+    els.playlistModalTitle.textContent = Array.isArray(songIdOrIds)
+      ? `Add ${songIdOrIds.length} Song${songIdOrIds.length === 1 ? "" : "s"} to Playlist`
+      : "Add to Playlist";
+  }
   els.playlistPickList.innerHTML = state.playlists.length
     ? state.playlists.map(pl => `
       <div class="playlist-pick-row" data-playlist="${pl.id}">
@@ -2378,8 +2685,19 @@ els.contentScroll.addEventListener("click", (e) => {
   }
   const removeSelectedBtn = e.target.closest('[data-action="remove-selected"]');
   if (removeSelectedBtn && !removeSelectedBtn.disabled) { performBulkRemove(); return; }
+  const addSelectedBtn = e.target.closest('[data-action="add-selected-to-playlist"]');
+  if (addSelectedBtn && !addSelectedBtn.disabled) {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length) openPlaylistModal(ids);
+    return;
+  }
   const checkEl = e.target.closest('[data-action="toggle-select"]');
   if (checkEl) { toggleRowSelected(checkEl.dataset.id); return; }
+
+  const addExternalBtn = e.target.closest('[data-action="add-external"]');
+  if (addExternalBtn) { addExternalPlaylist(); return; }
+  const removeExternalBtn = e.target.closest('[data-action="remove-external"]');
+  if (removeExternalBtn) { removeExternalPlaylist(removeExternalBtn.dataset.id); return; }
 
   const folderCard = e.target.closest("[data-folder]");
   if (folderCard) { state.currentFolder = decodeURIComponent(folderCard.dataset.folder); navigateTo("folder-detail"); return; }
@@ -2388,6 +2706,8 @@ els.contentScroll.addEventListener("click", (e) => {
   if (newPlCard) { openNewPlaylistModal(); return; }
   const recentCard = e.target.closest('[data-view-jump="recent"]');
   if (recentCard) { navigateTo("recent"); return; }
+  const externalCard = e.target.closest('[data-view-jump="external"]');
+  if (externalCard) { navigateTo("external"); return; }
   const plCard = e.target.closest("[data-playlist]");
   if (plCard) { state.currentPlaylist = plCard.dataset.playlist; navigateTo("playlist-detail"); return; }
 
@@ -2407,12 +2727,22 @@ els.contentScroll.addEventListener("click", (e) => {
   }
 });
 
+// External playlist inputs (re-rendered each time, so listen via delegation)
+els.contentScroll.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.target.id === "externalPlaylistInput" || e.target.id === "externalPlaylistNameInput")) {
+    e.preventDefault();
+    addExternalPlaylist();
+  }
+});
+
 /* ---------------------------------------------------------------------
    Multi-select helpers
    --------------------------------------------------------------------- */
 function currentSelectableSongIds() {
+  if (state.currentView === "songs") return visibleSongs(state.songs).map(s => s.id);
   if (state.currentView === "favorites") return visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
   if (state.currentView === "recent") return visibleSongs(recentlyPlayedSongs()).map(s => s.id);
+  if (state.currentView === "folder-detail") return visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
   if (state.currentView === "playlist-detail") {
     const pl = state.playlists.find(p => p.id === state.currentPlaylist);
     return pl ? visibleSongs(pl.songIds.map(id => state.songs.find(s => s.id === id)).filter(Boolean)).map(s => s.id) : [];
@@ -2444,7 +2774,19 @@ async function performBulkRemove() {
 // Playlist pick modal
 els.playlistPickList.addEventListener("click", (e) => {
   const row = e.target.closest("[data-playlist]");
-  if (row && state.addToPlaylistTargetId) { addSongToPlaylist(row.dataset.playlist, state.addToPlaylistTargetId); closePlaylistModal(); }
+  if (!row || !state.addToPlaylistTargetId) return;
+  const target = state.addToPlaylistTargetId;
+  if (Array.isArray(target)) {
+    addSongsToPlaylist(row.dataset.playlist, target);
+    state.addToPlaylistTargetId = null;
+    state.selectMode = false;
+    state.selectedIds.clear();
+    closePlaylistModal();
+    render();
+  } else {
+    addSongToPlaylist(row.dataset.playlist, target);
+    closePlaylistModal();
+  }
 });
 els.newPlaylistFromModalBtn.addEventListener("click", () => { closePlaylistModal(); openNewPlaylistModal(); });
 els.closePlaylistModalBtn.addEventListener("click", closePlaylistModal);
@@ -2462,7 +2804,18 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
   }
   const pl = await createPlaylist(name);
   closeNewPlaylistModal();
-  if (state.addToPlaylistTargetId) { await addSongToPlaylist(pl.id, state.addToPlaylistTargetId); state.addToPlaylistTargetId = null; }
+  const target = state.addToPlaylistTargetId;
+  if (target) {
+    if (Array.isArray(target)) {
+      await addSongsToPlaylist(pl.id, target);
+      state.selectMode = false;
+      state.selectedIds.clear();
+    } else {
+      await addSongToPlaylist(pl.id, target);
+    }
+    state.addToPlaylistTargetId = null;
+    render();
+  }
 });
 els.newPlaylistInput.addEventListener("keydown", (e) => { if (e.key === "Enter") els.confirmNewPlaylistBtn.click(); });
 
