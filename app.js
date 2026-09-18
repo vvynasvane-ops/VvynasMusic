@@ -98,6 +98,8 @@ const els = {
   miniArtist: $("#miniArtist"),
   miniPlayBtn: $("#miniPlayBtn"),
   miniPlayIcon: $("#miniPlayIcon"),
+  miniPlayIconPath: $("#miniPlayIconPath"),
+  miniPlayIconAnimate: $("#miniPlayIconAnimate"),
   miniPrevBtn: $("#miniPrevBtn"),
   miniNextBtn: $("#miniNextBtn"),
   miniProgressFill: $("#miniProgressFill"),
@@ -121,6 +123,8 @@ const els = {
   prevBtn: $("#prevBtn"),
   playBtn: $("#playBtn"),
   playIcon: $("#playIcon"),
+  playIconPath: $("#playIconPath"),
+  playIconAnimate: $("#playIconAnimate"),
   nextBtn: $("#nextBtn"),
   repeatBtn: $("#repeatBtn"),
   favBtn: $("#favBtn"),
@@ -1731,13 +1735,33 @@ function render() {
   render._lastView = v;
 }
 
+/* ---------------------------------------------------------------------
+   DJ-set view transitions — see the matching CSS block above
+   .content-scroll for what each move looks like.
+   --------------------------------------------------------------------- */
+const DJ_DETAIL_VIEWS = new Set(["folder-detail", "playlist-detail"]);
+function pickViewTransition(fromView, toView) {
+  if (DJ_DETAIL_VIEWS.has(toView) && !DJ_DETAIL_VIEWS.has(fromView)) return "drop";
+  if (!DJ_DETAIL_VIEWS.has(toView) && DJ_DETAIL_VIEWS.has(fromView)) return "spinback";
+  return "swap";
+}
+function playViewTransition(kind) {
+  const el = els.contentScroll;
+  if (!el) return;
+  el.classList.remove("dj-swap", "dj-drop", "dj-spinback");
+  void el.offsetWidth; // reflow so the animation restarts even on back-to-back navigations
+  el.classList.add(`dj-${kind}`);
+}
 function navigateTo(view) {
+  const fromView = state.currentView;
+  const transitionKind = pickViewTransition(fromView, view);
   state.currentView = view;
   state.selectMode = false;
   state.selectedIds.clear();
   els.navItems.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   els.tabbarBtns.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   render();
+  playViewTransition(transitionKind);
 }
 
 /* ---------------------------------------------------------------------
@@ -1873,18 +1897,80 @@ function syncPlayerFavIcon() {
   els.favBtn.querySelector("svg").setAttribute("fill", fav ? "currentColor" : "none");
   els.favBtn.style.color = fav ? "var(--accent2)" : "";
 }
+/* ---------------------------------------------------------------------
+   Play/Pause icon — a genuine shape-shift, not a hard swap. Both the
+   triangle and the twin bars are expressed as the same 12-point closed
+   polygon (the triangle is just the twin-bars' 12 corners resampled
+   evenly around its own perimeter, and the bars are drawn as one path
+   with a hairline "slit" between them so they still read as two
+   separate rectangles at rest). Same point count + same command order
+   on both ends means the browser can tween every point in a straight
+   line from one shape to the other — the SMIL <animate> on each <path>
+   (see index.html) plays that tween; setAttribute below guarantees the
+   resting shape is still correct even if SMIL somehow isn't available.
+   --------------------------------------------------------------------- */
+const PLAY_ICON_D = "M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z";
+const PAUSE_ICON_D = "M7,5 L11,5 L11,12 L13,12 L13,5 L17,5 L17,19 L13,19 L13,12 L11,12 L11,19 L7,19 Z";
+function morphPlayIcon(pathEl, animateEl, playing) {
+  if (!pathEl) return;
+  const from = pathEl.getAttribute("d");
+  const to = playing ? PAUSE_ICON_D : PLAY_ICON_D;
+  if (from === to) return;
+  pathEl.setAttribute("d", to);
+  if (animateEl) {
+    animateEl.setAttribute("from", from);
+    animateEl.setAttribute("to", to);
+    try { animateEl.beginElement(); } catch (e) { /* SMIL restart unsupported in a handful of older embedded webviews — the setAttribute above already leaves the correct final shape */ }
+  }
+  const svg = pathEl.closest("svg");
+  if (svg) { svg.classList.remove("dj-icon-morph"); void svg.offsetWidth; svg.classList.add("dj-icon-morph"); }
+}
 function setPlayIcon(playing) {
-  const pathPlay = '<path d="M8 5v14l11-7z"/>';
-  const pathPause = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
-  els.playIcon.innerHTML = playing ? pathPause : pathPlay;
-  els.miniPlayIcon.innerHTML = playing ? pathPause : pathPlay;
+  morphPlayIcon(els.playIconPath, els.playIconAnimate, playing);
+  morphPlayIcon(els.miniPlayIconPath, els.miniPlayIconAnimate, playing);
+}
+
+/* ---------------------------------------------------------------------
+   Play / Pause transitions — see the matching CSS block above
+   .player-art-wrap for what each move looks like.
+   --------------------------------------------------------------------- */
+function triggerLoopTighten() {
+  [els.playerArt, els.miniArt].forEach(el => {
+    if (!el) return;
+    el.classList.remove("dj-loop-tighten"); void el.offsetWidth;
+    el.classList.add("dj-loop-tighten");
+  });
+}
+function triggerEchoOut(artEl) {
+  if (!artEl) return;
+  if (getComputedStyle(artEl).position === "static") artEl.style.position = "relative";
+  for (let i = 0; i < 3; i++) {
+    const ghost = artEl.cloneNode(true);
+    ghost.removeAttribute("id");
+    ghost.classList.add("dj-echo-ghost");
+    ghost.style.position = "absolute";
+    ghost.style.inset = "0";
+    ghost.style.margin = "0";
+    ghost.style.pointerEvents = "none";
+    ghost.style.animationDelay = `${i * 90}ms`;
+    artEl.appendChild(ghost);
+    setTimeout(() => ghost.remove(), 650 + i * 90);
+  }
 }
 
 function togglePlay() {
   if (!audio.src) return;
   RageMode.ensureAudioGraph();
-  if (audio.paused) { audio.play().catch(()=>{}); state.isPlaying = true; }
-  else { audio.pause(); state.isPlaying = false; }
+  if (audio.paused) {
+    audio.play().catch(()=>{});
+    state.isPlaying = true;
+    triggerLoopTighten();
+  } else {
+    audio.pause();
+    state.isPlaying = false;
+    triggerEchoOut(els.playerArt);
+    triggerEchoOut(els.miniArt);
+  }
   setPlayIcon(state.isPlaying);
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
 }
