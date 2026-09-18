@@ -2887,6 +2887,10 @@ els.contentScroll.addEventListener("click", (e) => {
 
   const row = e.target.closest(".song-row");
   if (row) {
+    // Defensive guard: if the click landed on ANY button inside the row,
+    // never fall through to "play this row" — a button click should only
+    // ever do what that button says.
+    if (e.target.closest("button")) return;
     const id = row.dataset.id;
     if (state.selectMode) { toggleRowSelected(id); return; }
     window.VV.PixieDust.burstFromEl(row);
@@ -3081,7 +3085,10 @@ els.queueList.addEventListener("click", (e) => {
     return;
   }
   const row = e.target.closest(".song-row");
-  if (row) { state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue(); }
+  if (row) {
+    if (e.target.closest("button")) return; // don't jump-and-play when the remove button was tapped
+    state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue();
+  }
 });
 
 els.closeRowActionsBtn.addEventListener("click", closeRowActionSheet);

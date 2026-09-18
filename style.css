@@ -218,13 +218,22 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 
 /* ---------- Universal tap feedback — "literally clicking anything" gets
    a fast, DJ-crossfader-style thump so every interaction feels alive,
-   not just the ones with their own dedicated animation below. ---------- */
-button, .nav-item, .tabbar button, .song-row, .playlist-card, .folder-card,
+   not just the ones with their own dedicated animation below.
+   Scoped to LEAF controls only (real buttons/icons) — NOT to container
+   rows/cards like .song-row, .playlist-card, .folder-card. Those contain
+   their own nested buttons, and :active bubbles to ancestors in CSS, so
+   applying a transform to both at once shifts the nested button's live
+   position during the press/release — on release the browser's hit-test
+   can land back on the (now-shifted) row instead of the button, firing
+   the row's "play this song" handler instead of the button's action.
+   That was the cause of the ⋮ song-actions button sometimes playing the
+   row's song instead of opening the sheet. ---------- */
+button, .nav-item, .tabbar button,
 .icon-btn, .row-check, .external-card-head .name, select {
   transition: transform .14s cubic-bezier(.3,1,.4,1), filter .14s ease;
 }
-button:active, .nav-item:active, .tabbar button:active, .song-row:active,
-.playlist-card:active, .folder-card:active, .icon-btn:active, .row-check:active {
+button:active, .nav-item:active, .tabbar button:active,
+.icon-btn:active, .row-check:active {
   transform: scale(.94); filter: brightness(1.12);
 }
 
@@ -857,6 +866,32 @@ button:active, .nav-item:active, .tabbar button:active, .song-row:active,
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 18px 10px; }
 .sheet-head h2 { font-family: var(--font-display); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 0; }
 .sheet-body { overflow-y: auto; padding: 0 10px 14px; }
+
+/* On phones the sheet is the standard edge-to-edge slide-up drawer above.
+   From tablet width up, the app has a permanent sidebar and looks like a
+   real desktop app — a full-bleed mobile drawer glued to the viewport
+   edges looks out of place there, so instead it becomes a compact,
+   fully-rounded floating panel that pops up from where the ⋮/queue
+   button actually lives (bottom-right, above the mini player), with a
+   soft scale+fade instead of a slide — closer to how a desktop app's
+   context menu or popover behaves than a phone's bottom sheet. */
+@media (min-width: 900px) {
+  .sheet {
+    left: auto; right: 24px; bottom: calc(var(--player-h) + 20px);
+    width: min(380px, calc(100vw - 48px)); max-height: min(70vh, 560px);
+    border-radius: var(--radius-l, 18px); border: 1px solid var(--divider);
+    box-shadow: 0 18px 48px rgba(0,0,0,.4);
+    transform: translateY(10px) scale(.97); opacity: 0;
+    transform-origin: bottom right;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+    padding-bottom: 4px;
+  }
+  .sheet.open { transform: translateY(0) scale(1); opacity: 1; }
+  .sheet-handle { display: none; }
+}
+@media (min-width: 900px) and (max-width: 1023px) {
+  .sheet { right: 16px; width: min(340px, calc(100vw - 32px)); }
+}
 
 /* ---------- Modal (playlists / add-to-playlist / iOS instructions) ---------- */
 .modal-overlay { position: fixed; inset: 0; background: var(--overlay); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity .2s; }
