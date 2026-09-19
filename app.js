@@ -3064,36 +3064,22 @@ function activateSongRow(row) {
 // External playlist inputs (re-rendered each time, so listen via delegation)
 els.contentScroll.addEventListener("keydown", (e) => {
   // .song-row carries role="button" tabindex="0", which only promises
-  // keyboard operability if we actually wire up Enter/Space ourselves —
-  // browsers don't do it for free on non-native buttons. Only fires when
-  // the row itself is focused, not when focus is on one of its nested
-  // action buttons (those already handle their own Enter/Space natively).
+  // keyboard operability if we actually wire up Enter ourselves — browsers
+  // don't do it for free on non-native buttons. Only fires when the row
+  // itself is focused, not when focus is on one of its nested action
+  // buttons (those already handle their own Enter natively).
   //
   // Enter activates the row (play this song, or in select mode toggle its
-  // checkbox) exactly like a click. Space is deliberately NOT handled here
-  // for the play case: Space is the app-wide play/pause shortcut (see the
-  // window keydown handler below), and a song row keeping keyboard focus
-  // after you click/select it is the normal case, not an edge case — so
-  // Space has to keep meaning "play/pause" even then, not "restart this
-  // row from zero", or the shortcut would silently stop working the moment
-  // you'd actually used the library. Select mode is the one exception:
-  // there a focused row has no "play" meaning at all, so Space toggling
-  // its checkbox (standard listbox/checkbox keyboard behavior) is correct
-  // and doesn't compete with playback control.
-  if (e.target.classList.contains("song-row")) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (state.selectMode) { toggleRowSelected(e.target.dataset.id); return; }
-      activateSongRow(e.target);
-      return;
-    }
-    if (e.code === "Space" && state.selectMode) {
-      e.preventDefault();
-      toggleRowSelected(e.target.dataset.id);
-      return;
-    }
-    // Space, not in select mode: fall through untouched so it bubbles up
-    // to the window-level handler and toggles play/pause as usual.
+  // checkbox) exactly like a click. Space is deliberately not handled at
+  // all here, in select mode or otherwise: Space belongs to the app-wide
+  // play/pause shortcut (see the window keydown handler below) with no
+  // carve-outs, so it means the same thing everywhere in the app, no
+  // matter what's focused or what mode the list is in.
+  if (e.key === "Enter" && e.target.classList.contains("song-row")) {
+    e.preventDefault();
+    if (state.selectMode) { toggleRowSelected(e.target.dataset.id); return; }
+    activateSongRow(e.target);
+    return;
   }
   if (e.key === "Enter" && (e.target.id === "externalPlaylistInput" || e.target.id === "externalPlaylistNameInput")) {
     e.preventDefault();
@@ -3363,23 +3349,21 @@ window.addEventListener("keydown", (e) => {
   const isRange = t instanceof window.Element && t.tagName === "INPUT" && t.type === "range";
   const isVolSlider = isRange && t.classList.contains("vol-slider");
 
-  // Space — the app-wide play/pause toggle. It has to keep working no
-  // matter what state the app is in or what last had keyboard focus —
-  // a settings/playlist/queue sheet being open, a song row still focused
-  // from the last click or arrow-key move, mid-scroll, right after a
-  // song finished, etc. The only things allowed to keep Space for
-  // themselves are: something upstream already used it (e.defaultPrevented
-  // — e.g. the row-select-mode checkbox toggle above), and a genuinely
-  // native BUTTON/A element, which browsers already fire a click for on
-  // Space and where hijacking that would break real keyboard/
-  // screen-reader use of that control. A song row is deliberately NOT in
-  // that exclusion list (see the contentScroll handler above) — it used
-  // to be, which was the actual bug: focus a row and Space stopped being
-  // play/pause and started restarting that row instead.
+  // Space — the app-wide play/pause toggle, unconditionally. It has to
+  // keep meaning "play/pause" no matter what state the app is in or what
+  // last had keyboard focus: a settings/playlist/queue sheet open, a
+  // song row still focused from the last click, a button focused after
+  // tabbing through the toolbar, mid-scroll, right after a song
+  // finished — all of it. isTypingTarget (above) is the ONLY carve-out:
+  // if you're actually typing into a text field, Space types a space.
+  // Everywhere else it's play/pause, full stop — no exception for
+  // buttons or links either, same as Space works in every other media
+  // player (YouTube, Spotify, SoundCloud). Nothing upstream of this
+  // handler is allowed to consume Space for its own purpose anymore
+  // (see the contentScroll handler above, which used to and was the
+  // actual bug: focus a song row and Space stopped toggling playback).
   if (e.code === "Space") {
-    if (e.defaultPrevented) return;
-    const interactive = t instanceof window.Element && (t.tagName === "BUTTON" || t.tagName === "A");
-    if (interactive || e.repeat) return;
+    if (e.repeat) return;
     e.preventDefault(); togglePlay();
     return;
   }
