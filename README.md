@@ -160,3 +160,18 @@ an automatic English preference and an AUD picker.
 The lyrics view and automatic ID3-embedded album art extraction aren't
 in this pass — songs still default to generated art unless you manually
 upload a photo per-song (see "Custom album art per song" above).
+
+## Song options (⋮) — reliability notes
+
+The ⋮ menu on every song row (Library, Favorites, Recently Played, Folders,
+Playlists) is built to work wherever the row sits in the list — top, middle
+or bottom — at every screen size:
+
+- Closed sheets are inert (`pointer-events: none; visibility: hidden`), so an
+  invisible sheet can never cover a row's ⋮ button on tablet/desktop widths.
+- Decorative full-screen overlays (the page-turn animation) never capture taps.
+- Lists are patched in place by song id instead of rebuilt, so a tap is never
+  lost to a background re-render (e.g. while a big library's details load).
+- `scroll-padding-bottom` keeps keyboard-focused rows clear of the mini player.
+- "Play Next" on the current song is a no-op; the Add-to-Playlist target is
+  cleared whenever its dialog closes; song ids are collision-proof.

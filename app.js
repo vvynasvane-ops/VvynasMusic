@@ -45,6 +45,7 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
+  newPlaylistAddTarget: null, // songs to drop into the playlist being created — set ONLY by the picker's "+ New Playlist" path
   rowActionsTargetId: null,
   rowActionsPlaylistId: null,
   settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55, songListOverlay: 40 },
@@ -950,8 +951,16 @@ async function buildLibraryFromEntries(entries, isFsApi) {
   const folderMap = new Map();
   state.fileRefs.clear();
 
+  const usedIds = new Set();
   for (const e of entries) {
-    const id = hashStr(e.path);
+    // hashStr is a 32-bit hash: on big libraries two different paths CAN
+    // collide, and two songs sharing an id means every action on one hits
+    // the other. Keep the plain hash (so saved favourites/playlists keep
+    // working) but disambiguate any repeat deterministically.
+    let id = hashStr(e.path);
+    if (usedIds.has(id)) { let n = 2; while (usedIds.has(id + "_" + n)) n++; id = id + "_" + n; }
+    usedIds.add(id);
+    e.id = id;
     const filename = e.path.split("/").pop();
     const { artist, title } = titleCaseFromFilename(filename);
     const album = e.folder.split("/").pop() || "Unknown Album";
@@ -993,7 +1002,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
     while (idx < entries.length) {
       const myIdx = idx++;
       const e = entries[myIdx];
-      const id = hashStr(e.path);
+      const id = e.id || hashStr(e.path);
       try {
         const file = isFsApi ? await e.handle.getFile() : e.handle;
         const song = state.songs.find(s => s.id === id);
@@ -1009,7 +1018,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
         els.storageLabel.textContent = done < entries.length
           ? `Reading ${done}/${entries.length}…`
           : `${state.songs.length} song${state.songs.length === 1 ? "" : "s"} in your library`;
-        render();
+        if (done < entries.length) scheduleRender(); // throttled + never under a press
       }
     }
   }
@@ -1017,6 +1026,8 @@ async function loadMetadataProgressively(entries, isFsApi) {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   els.storageLabel.textContent = `${state.songs.length} song${state.songs.length === 1 ? "" : "s"} in your library`;
   setStorageBusy(false);
+  clearTimeout(scheduledRenderTimer); scheduledRenderTimer = null;
+  render(); // final pass with every duration/art now known
   updateNavCounts();
 }
 
@@ -1455,6 +1466,99 @@ function filterSongs(list) {
 function visibleSongs(list) { return sortSongs(filterSongs(list)); }
 
 /* ---------------------------------------------------------------------
+   Keyed DOM patching for the list views.
+
+   Every view used to be rebuilt with `el.innerHTML = …`, which destroys
+   and recreates EVERY row on every render — and render() runs a lot
+   (each favourite toggle, each track change, and every 12 files while the
+   library's metadata loads in the background). Rebuilding under the
+   user's finger meant a tap that started on one ⋮ button and ended on its
+   freshly created twin never produced a `click` at all, the row under the
+   pointer lost hover/focus, and big libraries did a full re-layout each
+   time. patchChildren() instead keeps every row whose markup is unchanged
+   (matched by song id), replaces only rows that actually changed, and
+   restores keyboard focus if the focused node had to be replaced.
+   --------------------------------------------------------------------- */
+const _innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+function rowKey(node) {
+  return node.nodeType === 1 && node.classList.contains("song-row") && node.dataset.id ? "row:" + node.dataset.id : null;
+}
+function describeFocus(parent) {
+  const ae = document.activeElement;
+  if (!ae || ae === document.body || !parent.contains(ae)) return null;
+  const row = ae.closest(".song-row");
+  return {
+    rowId: row ? row.dataset.id : null,
+    isRow: ae === row,
+    cls: ae.classList && ae.classList.contains("row-menu-btn") ? "row-menu-btn" : null,
+    id: ae.id || null,
+    action: ae.dataset ? ae.dataset.action || null : null,
+  };
+}
+function restoreFocus(parent, f) {
+  if (!f) return;
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && parent.contains(ae)) return; // still focused — nothing to do
+  let target = null;
+  if (f.id) target = parent.querySelector("#" + CSS.escape(f.id));
+  else if (f.rowId) {
+    const row = parent.querySelector('.song-row[data-id="' + CSS.escape(f.rowId) + '"]');
+    if (row) target = f.isRow ? row : (f.cls ? row.querySelector("." + f.cls) : null);
+  }
+  if (target) target.focus({ preventScroll: true });
+}
+function patchChildren(parent, html) {
+  const focus = describeFocus(parent);
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const next = Array.from(tpl.content.childNodes);
+  const cur = Array.from(parent.childNodes);
+  const oldByKey = new Map(), oldPlain = [];
+  for (const n of cur) { const k = rowKey(n); if (k) oldByKey.set(k, n); else oldPlain.push(n); }
+  let plainIdx = 0;
+  const finalNodes = next.map((n) => {
+    const k = rowKey(n);
+    let old = null;
+    if (k) { old = oldByKey.get(k) || null; if (old) oldByKey.delete(k); }
+    else old = oldPlain[plainIdx++] || null;
+    return old && old.isEqualNode(n) ? old : n; // unchanged → keep the live node untouched
+  });
+  const keep = new Set(finalNodes);
+  for (const n of cur) if (!keep.has(n)) parent.removeChild(n);
+  let cursor = parent.firstChild;
+  for (const n of finalNodes) {
+    if (n === cursor) cursor = cursor.nextSibling;
+    else parent.insertBefore(n, cursor);
+  }
+  restoreFocus(parent, focus);
+}
+[els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent, els.viewExternal]
+  .forEach((el) => Object.defineProperty(el, "innerHTML", {
+    configurable: true,
+    get() { return _innerHTMLDesc.get.call(this); },
+    set(html) { patchChildren(this, String(html)); },
+  }));
+
+/* Tracks a press in progress so background re-renders can wait it out. */
+let pointerIsDownAt = 0;
+document.addEventListener("pointerdown", () => { pointerIsDownAt = Date.now(); }, true);
+["pointerup", "pointercancel", "dragend"].forEach((t) => document.addEventListener(t, () => { pointerIsDownAt = 0; }, true));
+window.addEventListener("blur", () => { pointerIsDownAt = 0; });
+/** Coalesced render for background/progress updates (metadata loading):
+ *  at most one rebuild per `minGap` ms, and never while a finger/mouse is
+ *  mid-press (capped at 1.5s so a lost pointerup can't stall it). */
+let scheduledRenderTimer = null, lastRenderAt = 0;
+function scheduleRender(minGap = 450) {
+  if (scheduledRenderTimer) return;
+  const run = () => {
+    if (pointerIsDownAt && Date.now() - pointerIsDownAt < 1500) { scheduledRenderTimer = setTimeout(run, 120); return; }
+    scheduledRenderTimer = null;
+    render();
+  };
+  scheduledRenderTimer = setTimeout(run, Math.max(0, minGap - (performance.now() - lastRenderAt)));
+}
+
+/* ---------------------------------------------------------------------
    Rendering
    --------------------------------------------------------------------- */
 function songRowHtml(song, index, opts = {}) {
@@ -1719,10 +1823,17 @@ function updateNavCounts() {
 }
 
 function render() {
+  lastRenderAt = performance.now();
   updateNavCounts();
   const v = state.currentView;
-  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent, els.viewExternal]
-    .forEach(el => el.classList.add("hidden"));
+  // Hide only the views that AREN'T current. Hiding all eight and then
+  // un-hiding one collapses the scroller's height for a moment, and any
+  // layout that lands in between clamps scrollTop to 0 — the list would
+  // jump to the top after an action on a song lower down.
+  const viewByName = { songs: els.viewSongs, playlists: els.viewPlaylists, "playlist-detail": els.viewPlaylistDetail, folders: els.viewFolders,
+    "folder-detail": els.viewFolderDetail, favorites: els.viewFavorites, recent: els.viewRecent, external: els.viewExternal };
+  Object.entries(viewByName).forEach(([name, el]) => { if (name !== v) el.classList.add("hidden"); });
+  const keepScroll = els.contentScroll.scrollTop;
 
   if (v === "songs") { els.viewSongs.classList.remove("hidden"); renderSongsView(); els.viewTitle.textContent = "Library"; }
   else if (v === "playlists") { els.viewPlaylists.classList.remove("hidden"); renderPlaylistsView(); els.viewTitle.textContent = "Playlists"; }
@@ -1733,7 +1844,7 @@ function render() {
   else if (v === "recent") { els.viewRecent.classList.remove("hidden"); renderRecentView(); els.viewTitle.textContent = "Recently Played"; }
   else if (v === "external") { els.viewExternal.classList.remove("hidden"); renderExternalView(); els.viewTitle.textContent = "External Playlists"; }
 
-  els.contentScroll.scrollTop = render._lastView === v ? els.contentScroll.scrollTop : 0;
+  els.contentScroll.scrollTop = render._lastView === v ? keepScroll : 0;
   render._lastView = v;
 }
 
@@ -1811,6 +1922,13 @@ function addToQueueNext(songId) {
   }
   // If it's already queued somewhere, relocate it rather than duplicate it.
   const existingIndex = state.queue.indexOf(songId);
+  // …but if it IS the current song, there's nothing to move. Relocating it
+  // used to splice the playing track out from under the audio: queueIndex
+  // then pointed at a different song than the one audible.
+  if (existingIndex !== -1 && existingIndex === state.queueIndex) {
+    toast(`"${song.title}" is already playing`);
+    return;
+  }
   if (existingIndex !== -1) {
     state.queue.splice(existingIndex, 1);
     if (existingIndex < state.queueIndex) state.queueIndex--; // removing an earlier item shifts the current index down
@@ -2170,12 +2288,26 @@ function openRowActionSheet(songId, playlistId = null) {
   renderRowActionsList();
   els.rowActionsSheetOverlay.classList.add("open");
   els.rowActionsSheet.classList.add("open");
+  // Keyboard users: move focus into the menu (a closed sheet is now
+  // visibility:hidden, so this only works once .open is set, as above).
+  const first = els.rowActionsList.querySelector("button");
+  if (first) first.focus({ preventScroll: true });
 }
 function closeRowActionSheet() {
+  const openerId = state.rowActionsTargetId;
   els.rowActionsSheetOverlay.classList.remove("open");
   els.rowActionsSheet.classList.remove("open");
   state.rowActionsTargetId = null;
   state.rowActionsPlaylistId = null;
+  // Hand focus back to the ⋮ that opened the menu (unless another dialog
+  // took over, e.g. the playlist picker), so keyboard users keep their place.
+  if (openerId) requestAnimationFrame(() => {
+    if (document.querySelector(".modal-overlay.open")) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && !els.rowActionsSheet.contains(ae)) return;
+    const btn = els.contentScroll.querySelector('.row-menu-btn[data-id="' + CSS.escape(openerId) + '"]');
+    if (btn) btn.focus({ preventScroll: true });
+  });
 }
 
 /* ---------------------------------------------------------------------
@@ -2197,9 +2329,15 @@ function openPlaylistModal(songIdOrIds) {
     : `<p style="color:var(--text-muted);font-size:13px;">No playlists yet — create one below.</p>`;
   els.playlistModalOverlay.classList.add("open");
 }
-function closePlaylistModal() { els.playlistModalOverlay.classList.remove("open"); }
+function closePlaylistModal() {
+  els.playlistModalOverlay.classList.remove("open");
+  // The target belongs to THIS picker. It used to survive Close / a finished
+  // add, so the next playlist created from the Playlists tab silently
+  // received the songs from an unrelated earlier "Add to Playlist".
+  state.addToPlaylistTargetId = null;
+}
 function openNewPlaylistModal() {
-  state.playlistModalMode = "create"; state.renameTargetId = null;
+  state.playlistModalMode = "create"; state.renameTargetId = null; state.newPlaylistAddTarget = null;
   els.newPlaylistModalTitle.textContent = "New Playlist";
   els.confirmNewPlaylistBtn.textContent = "Create";
   els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = ""; els.newPlaylistInput.focus();
@@ -2207,12 +2345,22 @@ function openNewPlaylistModal() {
 function openRenamePlaylistModal(playlistId) {
   const pl = state.playlists.find(p => p.id === playlistId);
   if (!pl) return;
-  state.playlistModalMode = "rename"; state.renameTargetId = playlistId;
+  state.playlistModalMode = "rename"; state.renameTargetId = playlistId; state.newPlaylistAddTarget = null;
   els.newPlaylistModalTitle.textContent = "Rename Playlist";
   els.confirmNewPlaylistBtn.textContent = "Save";
   els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = pl.name; els.newPlaylistInput.focus(); els.newPlaylistInput.select();
 }
 function closeNewPlaylistModal() { els.newPlaylistModalOverlay.classList.remove("open"); }
+/** Backing out of "New Playlist": if it was opened from the Add-to-Playlist
+ *  picker, go back to that picker with the same song(s) still targeted;
+ *  either way nothing stays pending. */
+function cancelNewPlaylistModal() {
+  const back = state.newPlaylistAddTarget;
+  const wasRename = state.playlistModalMode === "rename";
+  closeNewPlaylistModal();
+  state.newPlaylistAddTarget = null;
+  if (back && !wasRename) openPlaylistModal(back);
+}
 
 /* ---------------------------------------------------------------------
    Settings modal + theme
@@ -2984,12 +3132,17 @@ els.playlistPickList.addEventListener("click", (e) => {
     closePlaylistModal();
   }
 });
-els.newPlaylistFromModalBtn.addEventListener("click", () => { closePlaylistModal(); openNewPlaylistModal(); });
+els.newPlaylistFromModalBtn.addEventListener("click", () => {
+  const target = state.addToPlaylistTargetId;
+  closePlaylistModal();
+  openNewPlaylistModal();
+  state.newPlaylistAddTarget = target; // only THIS path carries songs into the new playlist
+});
 els.closePlaylistModalBtn.addEventListener("click", closePlaylistModal);
 els.playlistModalOverlay.addEventListener("click", (e) => { if (e.target === els.playlistModalOverlay) closePlaylistModal(); });
 
-els.cancelNewPlaylistBtn.addEventListener("click", closeNewPlaylistModal);
-els.newPlaylistModalOverlay.addEventListener("click", (e) => { if (e.target === els.newPlaylistModalOverlay) closeNewPlaylistModal(); });
+els.cancelNewPlaylistBtn.addEventListener("click", cancelNewPlaylistModal);
+els.newPlaylistModalOverlay.addEventListener("click", (e) => { if (e.target === els.newPlaylistModalOverlay) cancelNewPlaylistModal(); });
 els.confirmNewPlaylistBtn.addEventListener("click", async () => {
   const name = els.newPlaylistInput.value.trim();
   if (!name) { toast("Give it a name first."); return; }
@@ -2998,9 +3151,10 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
     closeNewPlaylistModal();
     return;
   }
+  const target = state.newPlaylistAddTarget; // read BEFORE anything awaits or closes
+  state.newPlaylistAddTarget = null;
   const pl = await createPlaylist(name);
   closeNewPlaylistModal();
-  const target = state.addToPlaylistTargetId;
   if (target) {
     if (Array.isArray(target)) {
       await addSongsToPlaylist(pl.id, target);
@@ -3009,7 +3163,6 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
     } else {
       await addSongToPlaylist(pl.id, target);
     }
-    state.addToPlaylistTargetId = null;
     render();
   }
 });
@@ -3119,6 +3272,8 @@ els.rowActionsList.addEventListener("click", (e) => {
   if (btn.dataset.action === "sheet-fav") {
     toggleFavorite(songId);
     renderRowActionsList(); // reflect the new state immediately without closing the sheet
+    const again = els.rowActionsList.querySelector('[data-action="sheet-fav"]');
+    if (again) again.focus({ preventScroll: true }); // the list was rebuilt — keep keyboard focus on the same item
   } else if (btn.dataset.action === "sheet-queue") {
     addToQueueNext(songId);
     closeRowActionSheet();
@@ -3160,7 +3315,7 @@ window.addEventListener("keydown", (e) => {
 // by clicking its backdrop.
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (els.newPlaylistModalOverlay.classList.contains("open")) closeNewPlaylistModal();
+  if (els.newPlaylistModalOverlay.classList.contains("open")) cancelNewPlaylistModal();
   else if (els.playlistModalOverlay.classList.contains("open")) closePlaylistModal();
   else if (els.rowActionsSheet.classList.contains("open")) closeRowActionSheet();
   else if (els.queueSheet.classList.contains("open")) closeQueue();

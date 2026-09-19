@@ -1557,12 +1557,16 @@ const PixieDust = (function () {
 const BookTransition = (function () {
   let el;
   function init(elementId) { el = document.getElementById(elementId); }
+  let hideTimer = null;
   function play() {
     if (!el) return;
     el.classList.remove("book-playing"); void el.offsetWidth; // restart animation
     el.classList.add("book-playing");
     el.style.display = "flex";
-    setTimeout(() => { el.style.display = "none"; }, 700);
+    // Cancel the previous hide timer: with rapid next/prev taps an older
+    // timer used to fire mid-animation and cut the newest transition short.
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => { el.style.display = "none"; }, 700);
   }
   return { init, play };
 })();

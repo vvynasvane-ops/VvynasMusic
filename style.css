@@ -93,6 +93,10 @@ body {
 /* ---------- Book transition (storybook double-door open) ---------- */
 #bookTransition {
   position: fixed; inset: 0; z-index: 70; display: none; perspective: 1400px;
+  /* Purely decorative: without this the overlay swallowed EVERY tap on the
+     whole screen for ~0.7s after each track started — including a tap on
+     any song's ⋮ button. */
+  pointer-events: none;
 }
 #bookTransition .leaf {
   position: absolute; top: 0; bottom: 0; width: 50%; background: linear-gradient(90deg, #3A230F, #6B4525, #3A230F);
@@ -346,6 +350,12 @@ button:active, .nav-item:active, .tabbar button:active,
 .content-scroll {
   flex: 1; overflow-y: auto; padding: 4px 22px calc(var(--player-h) + 24px);
   background: rgba(0, 0, 0, var(--songlist-overlay-a, 0.37));
+  /* The mini-player floats over the bottom of this scroller. Without
+     scroll-padding, tabbing to (or programmatically scrolling to) a song's
+     ⋮ button near the bottom parks it UNDER the mini-player where it can't
+     be clicked. */
+  scroll-padding-bottom: calc(var(--player-h) + 16px);
+  scroll-padding-top: 8px;
 }
 
 /* ---------------------------------------------------------------------
@@ -858,10 +868,20 @@ button:active, .nav-item:active, .tabbar button:active,
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 46; max-height: 68vh;
   background: var(--bg-card); border-radius: 20px 20px 0 0; border-top: 1px solid var(--divider);
-  transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.8,.2,1);
+  transform: translateY(100%);
+  /* visibility flips only AFTER the slide-out finishes (0s duration, .3s
+     delay) so the close animation is still visible. */
+  transition: transform .3s cubic-bezier(.2,.8,.2,1), visibility 0s linear .3s;
   display: flex; flex-direction: column; padding-bottom: var(--safe-bottom);
+  /* A closed sheet must be completely inert. On tablet/desktop widths the
+     closed sheet is only faded out (opacity: 0) and parked over the
+     bottom-right of the song list — with no pointer-events rule it kept
+     catching clicks there, so the ⋮ button of any song scrolled into that
+     corner (typically the LAST songs of a list) silently did nothing.
+     visibility:hidden also removes its buttons from the tab order. */
+  pointer-events: none; visibility: hidden;
 }
-.sheet.open { transform: translateY(0); }
+.sheet.open { transform: translateY(0); pointer-events: auto; visibility: visible; transition: transform .3s cubic-bezier(.2,.8,.2,1), visibility 0s; }
 .sheet-handle { width: 36px; height: 4px; background: var(--divider); border-radius: 4px; margin: 10px auto 4px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 18px 10px; }
 .sheet-head h2 { font-family: var(--font-display); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 0; }
@@ -883,10 +903,10 @@ button:active, .nav-item:active, .tabbar button:active,
     box-shadow: 0 18px 48px rgba(0,0,0,.4);
     transform: translateY(10px) scale(.97); opacity: 0;
     transform-origin: bottom right;
-    transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease, visibility 0s linear .22s;
     padding-bottom: 4px;
   }
-  .sheet.open { transform: translateY(0) scale(1); opacity: 1; }
+  .sheet.open { transform: translateY(0) scale(1); opacity: 1; transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease, visibility 0s; }
   .sheet-handle { display: none; }
 }
 @media (min-width: 900px) and (max-width: 1023px) {
@@ -964,7 +984,7 @@ button:active, .nav-item:active, .tabbar button:active,
   }
   .tabbar button.active { color: var(--accent); }
   .tabbar svg { width: 19px; height: 19px; }
-  .content-scroll { padding-bottom: calc(56px + var(--player-h) + var(--safe-bottom) + 20px); }
+  .content-scroll { padding-bottom: calc(56px + var(--player-h) + var(--safe-bottom) + 20px); scroll-padding-bottom: calc(56px + var(--player-h) + var(--safe-bottom) + 12px); }
   .topbar h1 { display: none; }
   .topbar { padding: calc(12px + var(--safe-top)) 14px 12px; gap: 8px; }
   .content-scroll { padding-left: 14px; padding-right: 14px; }
