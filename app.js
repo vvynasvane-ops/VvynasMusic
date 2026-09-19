@@ -2891,22 +2891,40 @@ els.contentScroll.addEventListener("click", (e) => {
     // never fall through to "play this row" — a button click should only
     // ever do what that button says.
     if (e.target.closest("button")) return;
-    const id = row.dataset.id;
-    if (state.selectMode) { toggleRowSelected(id); return; }
-    window.VV.PixieDust.burstFromEl(row);
-    let queueList;
-    if (state.currentView === "folder-detail") queueList = visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
-    else if (state.currentView === "playlist-detail") { const pl = state.playlists.find(p => p.id === state.currentPlaylist); queueList = visibleSongs(pl.songIds.map(sid => state.songs.find(s => s.id === sid)).filter(Boolean)).map(s => s.id); }
-    else if (state.currentView === "favorites") queueList = visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
-    else if (state.currentView === "recent") queueList = visibleSongs(recentlyPlayedSongs()).map(s => s.id);
-    else queueList = visibleSongs(state.songs).map(s => s.id);
-    playSongId(id, queueList);
-    openPlayer();
+    if (state.selectMode) { toggleRowSelected(row.dataset.id); return; }
+    activateSongRow(row);
   }
 });
 
+// Shared by the click handler above and the keydown handler below, so a
+// song row (role="button") behaves the same whether it's clicked or
+// activated from the keyboard.
+function activateSongRow(row) {
+  const id = row.dataset.id;
+  window.VV.PixieDust.burstFromEl(row);
+  let queueList;
+  if (state.currentView === "folder-detail") queueList = visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
+  else if (state.currentView === "playlist-detail") { const pl = state.playlists.find(p => p.id === state.currentPlaylist); queueList = visibleSongs(pl.songIds.map(sid => state.songs.find(s => s.id === sid)).filter(Boolean)).map(s => s.id); }
+  else if (state.currentView === "favorites") queueList = visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
+  else if (state.currentView === "recent") queueList = visibleSongs(recentlyPlayedSongs()).map(s => s.id);
+  else queueList = visibleSongs(state.songs).map(s => s.id);
+  playSongId(id, queueList);
+  openPlayer();
+}
+
 // External playlist inputs (re-rendered each time, so listen via delegation)
 els.contentScroll.addEventListener("keydown", (e) => {
+  // .song-row carries role="button" tabindex="0", which only promises
+  // keyboard operability if we actually wire up Enter/Space ourselves —
+  // browsers don't do it for free on non-native buttons. Only fires when
+  // the row itself is focused, not when focus is on one of its nested
+  // action buttons (those already handle their own Enter/Space natively).
+  if ((e.key === "Enter" || e.code === "Space") && e.target.classList.contains("song-row")) {
+    e.preventDefault();
+    if (state.selectMode) { toggleRowSelected(e.target.dataset.id); return; }
+    activateSongRow(e.target);
+    return;
+  }
   if (e.key === "Enter" && (e.target.id === "externalPlaylistInput" || e.target.id === "externalPlaylistNameInput")) {
     e.preventDefault();
     addExternalPlaylist();
@@ -3114,10 +3132,40 @@ els.rowActionsList.addEventListener("click", (e) => {
 });
 
 window.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT") return;
+  // Only bother checking what's focused for the keys we actually care
+  // about — cheaper, and avoids ever touching e.target for keys (or
+  // synthetic/edge-case targets) this shortcut has no business near.
+  if (e.code !== "Space" && !((e.code === "ArrowRight" || e.code === "ArrowLeft") && e.shiftKey)) return;
+  // Don't hijack Space/Shift+Arrow when focus is on any control that has
+  // its own native meaning for those keys — text inputs, selects, and
+  // (crucially) buttons/links/anything focusable. A focused <button>
+  // activates on Space; without this check that Space also fired the
+  // global "toggle playback" shortcut and preventDefault() suppressed
+  // the button's own click — so keyboard-focusing the song-options (⋮)
+  // button and pressing Space silently toggled playback instead of
+  // opening the menu.
+  const t = e.target;
+  const interactive = t instanceof window.Element && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
+    t.tagName === "SELECT" || t.tagName === "BUTTON" || t.isContentEditable || t.closest('[role="button"], [tabindex]'));
+  if (interactive) return;
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  else if (e.code === "ArrowRight" && e.shiftKey) nextSong(false);
-  else if (e.code === "ArrowLeft" && e.shiftKey) prevSong();
+  else if (e.code === "ArrowRight") nextSong(false);
+  else if (e.code === "ArrowLeft") prevSong();
+});
+
+// Escape closes whichever sheet/modal is currently open, innermost first —
+// the theme carousel has its own Escape handling above (it also needs
+// ArrowLeft/Right while open), everything else funnels through here so
+// every overlay in the app is dismissable from the keyboard, not just
+// by clicking its backdrop.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (els.newPlaylistModalOverlay.classList.contains("open")) closeNewPlaylistModal();
+  else if (els.playlistModalOverlay.classList.contains("open")) closePlaylistModal();
+  else if (els.rowActionsSheet.classList.contains("open")) closeRowActionSheet();
+  else if (els.queueSheet.classList.contains("open")) closeQueue();
+  else if (els.settingsModalOverlay.classList.contains("open")) closeSettings();
+  else if (els.playerOverlay.classList.contains("open")) closePlayer();
 });
 
 window.addEventListener("resize", () => {
