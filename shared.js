@@ -1609,6 +1609,138 @@ const GlobeTitle = (function () {
 })();
 
 /* ---------------------------------------------------------------------
+   Volume control + keyboard-shortcut catalog
+   Shared by the audio player (index.html) and the video player
+   (video.html) so both behave — and are documented — identically.
+   --------------------------------------------------------------------- */
+
+/** Wraps a media element (<audio> or <video>) with one source of truth for
+ *  volume + mute. Volume is remembered per environment (storageKey) in the
+ *  same IndexedDB "kv" store as the rest of the app's settings; mute is
+ *  deliberately NOT remembered, so the app never opens silent by surprise.
+ *
+ *  iOS Safari ignores writes to media.volume (the hardware buttons own it),
+ *  so `supported` is feature-detected and the UI hides its slider there —
+ *  mute (media.muted) still works everywhere. */
+function createVolumeController(media, { storageKey, step = 5 } = {}) {
+  const supported = (() => {
+    try {
+      const prev = media.volume;
+      media.volume = 0.5;
+      const ok = Math.abs(media.volume - 0.5) < 0.01;
+      media.volume = prev;
+      return ok;
+    } catch (e) { return false; }
+  })();
+  const st = { volume: 100, muted: false, last: 100 };
+  const subs = [];
+  let saveTimer = null;
+
+  function apply() {
+    media.muted = st.muted;
+    if (supported) media.volume = st.volume / 100;
+  }
+  function notify() { const snap = api.state; subs.forEach(fn => { try { fn(snap); } catch (e) { /* a UI listener must never break playback */ } }); }
+  function persist() {
+    if (!storageKey) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { idbSet("kv", storageKey, { volume: st.volume }).catch(() => {}); }, 300);
+  }
+  function commit() { apply(); notify(); persist(); }
+
+  const api = {
+    supported, step,
+    get state() { return { volume: st.volume, muted: st.muted, level: st.muted ? 0 : st.volume, supported }; },
+    subscribe(fn) { subs.push(fn); fn(api.state); },
+    /** Sets volume 0–100. Any audible value also unmutes. */
+    set(pct) {
+      pct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      st.volume = pct;
+      if (pct > 0) { st.last = pct; st.muted = false; }
+      commit();
+    },
+    /** dir = +1 / -1, moves by `step` percent. */
+    nudge(dir) { api.set(st.volume + dir * step); },
+    toggleMute() {
+      if (st.muted || st.volume === 0) {
+        st.muted = false;
+        if (st.volume === 0) st.volume = st.last || 50;
+      } else {
+        st.muted = true;
+      }
+      commit();
+    },
+    async load() {
+      if (storageKey) {
+        try {
+          const saved = await idbGet("kv", storageKey);
+          if (saved && typeof saved.volume === "number") {
+            st.volume = Math.max(0, Math.min(100, Math.round(saved.volume)));
+            if (st.volume > 0) st.last = st.volume;
+          }
+        } catch (e) { /* first run / storage unavailable — keep the 100% default */ }
+      }
+      apply(); notify();
+    },
+  };
+  return api;
+}
+
+/** Inner SVG markup for a speaker icon: muted/0 → ✕, <50 → one wave, else two. */
+function volumeIconMarkup(level) {
+  const base = '<path d="M11 5L6 9H2v6h4l5 4V5z"/>';
+  if (level <= 0) return base + '<path d="M22 9l-6 6M16 9l6 6"/>';
+  if (level < 50) return base + '<path d="M15.5 8.5a5 5 0 010 7"/>';
+  return base + '<path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/>';
+}
+
+/** One catalog drives the on-screen notice, so what the Settings panel
+ *  (audio) / Shortcuts panel (video) says can't drift from the key map
+ *  documented here. The handlers themselves live in app.js and video.js. */
+const SHORTCUTS = {
+  audio: [
+    { keys: ["Space"],          label: "Play / Pause" },
+    { keys: ["Shift", "↑"],     label: "Volume up 5%" },
+    { keys: ["Shift", "↓"],     label: "Volume down 5%" },
+    { keys: ["M"],              label: "Mute / Unmute" },
+    { keys: ["←"],              label: "Rewind 5 seconds" },
+    { keys: ["→"],              label: "Forward 5 seconds" },
+    { keys: ["Shift", "←"],     label: "Previous song" },
+    { keys: ["Shift", "→"],     label: "Next song" },
+    { keys: ["S"],              label: "Shuffle on / off" },
+    { keys: ["R"],              label: "Repeat: off → all → one" },
+  ],
+  video: [
+    { keys: ["Space"],          label: "Play / Pause" },
+    { keys: ["Shift", "↑"],     label: "Volume up 5%" },
+    { keys: ["Shift", "↓"],     label: "Volume down 5%" },
+    { keys: ["M"],              label: "Mute / Unmute" },
+    { keys: ["←"],              label: "Rewind 5 seconds" },
+    { keys: ["→"],              label: "Forward 5 seconds" },
+    { keys: ["Shift", "←"],     label: "Previous video" },
+    { keys: ["Shift", "→"],     label: "Next video" },
+    { keys: ["F"],              label: "Fullscreen on / off" },
+    { keys: ["V"],              label: "Cycle subtitle language" },
+  ],
+};
+const SHORTCUT_NOTES = {
+  audio: "Shortcuts pause while you're typing in a field. Esc closes whichever panel is open.",
+  video: "Shortcuts pause while you're typing in a field. Press / to jump to search.",
+};
+
+/** Fills `container` with the shortcut rows for env ("audio" | "video"). */
+function renderShortcutList(container, env, noteEl) {
+  if (!container) return;
+  const list = SHORTCUTS[env] || [];
+  container.innerHTML = list.map(s => `
+    <div class="shortcut-row">
+      <span class="shortcut-keys">${s.keys.map(k => `<kbd>${k}</kbd>`).join('<span class="shortcut-plus">+</span>')}</span>
+      <span class="shortcut-label">${s.label}</span>
+    </div>`).join("");
+  if (noteEl) noteEl.textContent = SHORTCUT_NOTES[env] || "";
+}
+
+/* ---------------------------------------------------------------------
    Public export
    --------------------------------------------------------------------- */
 global.VV = {
@@ -1620,6 +1752,7 @@ global.VV = {
   C, linGrad, radGrad, fillGrad,
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
   resizeImageFileToDataUrl, extractRawPictureBlob, getEmbeddedArtForFile,
+  createVolumeController, volumeIconMarkup, SHORTCUTS, renderShortcutList,
 };
 
 })(window);

@@ -70,6 +70,38 @@ python3 -m http.server 8080
 - **Monthly & yearly recap**, **video player** with subtitles/multi-
   language audio, and **DJ Mode** — see the sections below.
 
+## Volume control & keyboard shortcuts
+
+**Volume** works in both players — the music player (mini-player + full
+player sliders, mute buttons) and the video player (slider + mute button
+under the seek bar). Each remembers its own level between visits; mute is
+never remembered, so the app doesn't open silent by surprise. iPhone/iPad
+Safari doesn't let web pages set volume (the hardware buttons own it), so
+there the slider hides itself and only the mute button is shown.
+
+**Ten shortcuts per player**, listed in the app itself — music player:
+Settings → ⌨ Keyboard Shortcuts; video player: the ⌨ button in the top bar.
+
+| Key | Music player | Video player |
+| --- | --- | --- |
+| `Space` | Play / pause | Play / pause |
+| `Shift` + `↑` / `↓` | Volume ±5% | Volume ±5% |
+| `M` | Mute / unmute | Mute / unmute |
+| `←` / `→` | Rewind / forward 5s | Rewind / forward 5s |
+| `Shift` + `←` / `→` | Previous / next song | Previous / next video |
+| `S` | Shuffle on / off | — |
+| `R` | Repeat off → all → one | — |
+| `F` | — | Fullscreen on / off |
+| `V` | — | Cycle subtitle language |
+
+Notes: shortcuts pause while typing in a field, and never fire with
+Ctrl/Cmd/Alt held (so browser combos like Ctrl+R still work). Plain `↑`/`↓`
+are intentionally left alone because they scroll the song/file lists.
+Fullscreen in the video player now fullscreens the whole stage rather than
+the bare `<video>`, so the volume/seek on-screen display and the shortcuts
+keep working while fullscreen. The shortcut catalog lives in `shared.js`
+(`SHORTCUTS`) — update it whenever a handler in `app.js` / `video.js` changes.
+
 ## Rage Mode (Settings → 🔥 Rage Mode)
 
 An alternate, **opt-in** full-app skin built from your concert-atmosphere

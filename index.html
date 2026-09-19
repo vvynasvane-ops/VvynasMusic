@@ -207,6 +207,10 @@
       <div class="title" id="miniTitle">—</div>
       <div class="sub" id="miniArtist">—</div>
     </div>
+    <div class="mini-volume" id="miniVolume">
+      <button class="vol-mute-btn" id="miniMuteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="miniVolIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+      <input type="range" class="vol-slider" id="miniVolSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+    </div>
     <div class="controls">
       <button id="miniPrevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
       <button id="miniPlayBtn" class="play-btn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="miniPlayIcon"><path id="miniPlayIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="miniPlayIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
@@ -275,6 +279,12 @@
         <button class="pc-play" id="playBtn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path id="playIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="playIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
         <button class="pc-skip" id="nextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
         <button class="pc-toggle" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
+      </div>
+
+      <div class="player-volume" id="playerVolume">
+        <button class="vol-mute-btn" id="muteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="volIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+        <input type="range" class="vol-slider" id="volSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+        <span class="vol-value" id="volValue">100%</span>
       </div>
 
       <div class="player-bottom-row">
@@ -406,6 +416,10 @@
         <span class="overlay-strength-icon" title="Song list panel near-black">◆</span>
         <span class="overlay-strength-value" id="songListOverlayValue">40%</span>
       </div>
+
+      <div class="section-label" style="margin-top:16px;">⌨ Keyboard Shortcuts</div>
+      <div class="shortcut-list" id="shortcutList"></div>
+      <div class="shortcut-note" id="shortcutNote"></div>
 
       <div class="modal-actions">
         <button class="btn-secondary" id="closeSettingsBtn">Close</button>

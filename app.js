@@ -11,7 +11,8 @@
    IndexedDB — delegated to shared.js (VV) so index/video/recap pages
    never open the database at different versions and block each other.
    --------------------------------------------------------------------- */
-const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut, openDB } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut, openDB,
+        createVolumeController, volumeIconMarkup, renderShortcutList } = window.VV;
 
 /* ---------------------------------------------------------------------
    State
@@ -3169,7 +3170,7 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
 els.newPlaylistInput.addEventListener("keydown", (e) => { if (e.key === "Enter") els.confirmNewPlaylistBtn.click(); });
 
 // Mini player
-els.miniPlayer.addEventListener("click", (e) => { if (!e.target.closest("button")) openPlayer(); });
+els.miniPlayer.addEventListener("click", (e) => { if (!e.target.closest("button, .mini-volume")) openPlayer(); });
 els.miniPlayBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePlay(); });
 els.miniPrevBtn.addEventListener("click", (e) => { e.stopPropagation(); prevSong(); });
 els.miniNextBtn.addEventListener("click", (e) => { e.stopPropagation(); nextSong(false); });
@@ -3286,26 +3287,94 @@ els.rowActionsList.addEventListener("click", (e) => {
   }
 });
 
+/* ---------------------------------------------------------------------
+   Volume control — one controller drives the mini-player slider, the
+   full-player slider, the mute buttons, and the keyboard shortcuts, so
+   they can never disagree. Remembered between visits (not the mute flag).
+   --------------------------------------------------------------------- */
+const volume = createVolumeController(audio, { storageKey: "volume-audio", step: 5 });
+const volUI = {
+  sliders: [$("#volSlider"), $("#miniVolSlider")],
+  buttons: [$("#muteBtn"), $("#miniMuteBtn")],
+  icons: [$("#volIcon"), $("#miniVolIcon")],
+  value: $("#volValue"),
+  groups: [$("#playerVolume"), $("#miniVolume")],
+};
+volume.subscribe((v) => {
+  volUI.sliders.forEach(sl => {
+    sl.value = v.level;
+    sl.style.setProperty("--vol-pct", v.level + "%");
+    sl.setAttribute("aria-valuetext", v.muted ? "Muted" : v.volume + " percent");
+  });
+  volUI.icons.forEach(ic => { ic.innerHTML = volumeIconMarkup(v.level); });
+  volUI.buttons.forEach(b => b.classList.toggle("muted", v.level === 0));
+  volUI.value.textContent = v.muted ? "Muted" : v.volume + "%";
+  volUI.groups.forEach(g => g.classList.toggle("no-volume-slider", !v.supported));
+});
+volUI.sliders.forEach(sl => sl.addEventListener("input", () => volume.set(Number(sl.value))));
+volUI.buttons.forEach(b => b.addEventListener("click", (e) => { e.stopPropagation(); volume.toggleMute(); }));
+function volumeToast() {
+  const v = volume.state;
+  return v.muted ? "🔇 Muted" : v.volume === 0 ? "🔇 Volume 0%" : `🔊 Volume ${v.volume}%`;
+}
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts — this map is what Settings → Keyboard Shortcuts
+   shows (catalog: SHORTCUTS.audio in shared.js). Keep the two in sync.
+     Space          play / pause          M          mute / unmute
+     Shift + ↑ / ↓  volume ±5%            S          shuffle on / off
+     ← / →          seek ∓5s              R          repeat off → all → one
+     Shift + ← / →  previous / next song
+   Plain arrows are deliberately NOT used for volume: they scroll the
+   library list, and the app already reserved Shift+Arrow for track skip.
+   --------------------------------------------------------------------- */
+function isTypingTarget(t) {
+  if (!(t instanceof window.Element)) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file"].includes((t.type || "").toLowerCase());
+}
 window.addEventListener("keydown", (e) => {
-  // Only bother checking what's focused for the keys we actually care
-  // about — cheaper, and avoids ever touching e.target for keys (or
-  // synthetic/edge-case targets) this shortcut has no business near.
-  if (e.code !== "Space" && !((e.code === "ArrowRight" || e.code === "ArrowLeft") && e.shiftKey)) return;
-  // Don't hijack Space/Shift+Arrow when focus is on any control that has
-  // its own native meaning for those keys — text inputs, selects, and
-  // (crucially) buttons/links/anything focusable. A focused <button>
-  // activates on Space; without this check that Space also fired the
-  // global "toggle playback" shortcut and preventDefault() suppressed
-  // the button's own click — so keyboard-focusing the song-options (⋮)
-  // button and pressing Space silently toggled playback instead of
-  // opening the menu.
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return; // never steal browser/OS combos (Ctrl+R, Cmd+S…)
   const t = e.target;
-  const interactive = t instanceof window.Element && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
-    t.tagName === "SELECT" || t.tagName === "BUTTON" || t.isContentEditable || t.closest('[role="button"], [tabindex]'));
-  if (interactive) return;
-  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  else if (e.code === "ArrowRight") nextSong(false);
-  else if (e.code === "ArrowLeft") prevSong();
+  if (isTypingTarget(t)) return;
+  const key = e.key;
+  const isRange = t instanceof window.Element && t.tagName === "INPUT" && t.type === "range";
+  const isVolSlider = isRange && t.classList.contains("vol-slider");
+
+  // Space — keep the long-standing guard: a focused button/link/row has its
+  // own Space meaning (activating it), so only handle it from "nowhere".
+  if (e.code === "Space") {
+    const interactive = t instanceof window.Element && (t.tagName === "BUTTON" || t.tagName === "A" ||
+      t.closest('[role="button"], [tabindex]'));
+    if (interactive || e.repeat) return;
+    e.preventDefault(); togglePlay();
+    return;
+  }
+
+  if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+    if (isRange && !(isVolSlider && e.shiftKey && (key === "ArrowUp" || key === "ArrowDown"))) return; // sliders keep their own arrow keys
+    if ((key === "ArrowLeft" || key === "ArrowRight") && els.themeCarouselOverlay.classList.contains("open")) return; // carousel owns these
+    if (e.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      e.preventDefault();
+      if (!volume.supported) { toast("Volume is controlled by your device's buttons in this browser.", 2800); return; }
+      volume.nudge(key === "ArrowUp" ? 1 : -1);
+      toast(volumeToast(), 1100);
+    } else if (e.shiftKey && key === "ArrowRight") { if (!e.repeat) nextSong(false); }
+    else if (e.shiftKey && key === "ArrowLeft") { if (!e.repeat) prevSong(); }
+    else if (!e.shiftKey && (key === "ArrowLeft" || key === "ArrowRight")) {
+      if (!audio.src || !isFinite(audio.duration)) return;
+      e.preventDefault();
+      audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + (key === "ArrowRight" ? 5 : -5)));
+    }
+    return;
+  }
+
+  if (e.shiftKey || e.repeat) return;
+  const k = key.toLowerCase();
+  if (k === "m") { e.preventDefault(); volume.toggleMute(); toast(volumeToast(), 1100); }
+  else if (k === "s") { e.preventDefault(); toggleShuffle(); toast(state.shuffle ? "🔀 Shuffle on" : "Shuffle off", 1100); }
+  else if (k === "r") { e.preventDefault(); cycleRepeat(); toast(state.repeat === "one" ? "🔂 Repeat one" : state.repeat === "all" ? "🔁 Repeat all" : "Repeat off", 1100); }
 });
 
 // Escape closes whichever sheet/modal is currently open, innermost first —
@@ -3333,6 +3402,8 @@ window.addEventListener("resize", () => {
    Boot
    --------------------------------------------------------------------- */
 async function boot() {
+  renderShortcutList($("#shortcutList"), "audio", $("#shortcutNote"));
+  volume.load();
   await loadUserData();
   if (fsApiSupported()) {
     els.fsApiNote.textContent = "Your browser will remember this folder next time you open the app.";

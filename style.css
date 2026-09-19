@@ -556,8 +556,6 @@ button:active, .nav-item:active, .tabbar button:active,
   font-size: 13.5px; padding: 12px 22px; border-radius: 999px; width: 100%; margin-top: 12px; transition: all .2s;
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-.btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-
 
 /* ---------- Song rows / grid ---------- */
 .section-label {
@@ -1193,4 +1191,75 @@ html.rage-active #heartTitleCanvas { display: block; }
 @media (max-width: 380px) {
   .tc-card { width: 104px; height: 154px; }
   .tc-track { height: 190px; }
+}
+
+/* =====================================================================
+   VOLUME CONTROL + KEYBOARD SHORTCUTS
+   Shared by the audio player (index.html) and video player (video.html).
+   ===================================================================== */
+
+/* Range slider whose filled portion tracks --vol-pct (set from JS) */
+.vol-slider {
+  -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px; outline: none; cursor: pointer;
+  background: linear-gradient(to right, var(--accent) var(--vol-pct, 100%), var(--divider) var(--vol-pct, 100%));
+  min-width: 0;
+}
+.vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; box-shadow: 0 0 6px var(--accent-dim); border: none;
+}
+.vol-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; }
+.vol-slider::-moz-range-track { background: transparent; height: 4px; }
+.vol-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+.vol-mute-btn {
+  width: 36px; height: 36px; flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; color: var(--text-secondary); background: var(--ripple); transition: color .2s, background .2s;
+}
+.vol-mute-btn:hover { color: var(--accent); background: var(--accent-dim); }
+.vol-mute-btn.muted { color: var(--accent2); background: var(--accent2-dim); }
+.vol-mute-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.vol-value { font-size: 11.5px; color: var(--text-muted); width: 38px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+.no-volume-slider .vol-slider, .no-volume-slider .vol-value { display: none; }
+
+/* Audio — full player row */
+.player-volume { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 460px; margin-top: 22px; }
+.player-volume .vol-slider { flex: 1; }
+
+/* Audio — mini player (desktop/tablet only; phones use hardware buttons) */
+.mini-volume { display: flex; align-items: center; gap: 6px; flex: none; margin-right: 8px; cursor: default; }
+.mini-volume .vol-mute-btn { width: 32px; height: 32px; }
+.mini-volume .vol-slider { width: 92px; }
+@media (max-width: 899px) { .mini-volume { display: none; } }
+
+/* Video — volume row + on-screen display */
+.vp-volume-row { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 0 18px 14px; max-width: 360px; margin: 0 auto; }
+.vp-volume-row .vol-slider { flex: 1; }
+.vp-stage { position: relative; }
+.vp-stage:fullscreen { background: #000; }
+.vp-stage:fullscreen video { max-height: 100vh; height: 100vh; }
+.vp-stage:-webkit-full-screen { background: #000; }
+.vp-stage:-webkit-full-screen video { max-height: 100vh; height: 100vh; }
+.vp-osd {
+  position: absolute; top: 14px; right: 14px; z-index: 3; display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-radius: 999px; background: rgba(0,0,0,.72); color: #fff; font-size: 13px;
+  font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transform: translateY(-4px);
+  transition: opacity .18s, transform .18s;
+}
+.vp-osd.show { opacity: 1; transform: none; }
+.vp-osd svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.vp-osd .osd-bar { width: 80px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.25); overflow: hidden; }
+.vp-osd .osd-bar > i { display: block; height: 100%; background: var(--accent); }
+
+/* Keyboard shortcut notice (Settings panel / video Shortcuts panel) */
+.shortcut-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 2px; border-bottom: 1px solid var(--divider); }
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-keys { display: flex; align-items: center; gap: 4px; flex: none; }
+.shortcut-plus { font-size: 10px; color: var(--text-muted); }
+.shortcut-label { font-size: 12.5px; color: var(--text-secondary); text-align: right; }
+.shortcut-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+kbd {
+  display: inline-block; min-width: 24px; padding: 3px 7px; border-radius: 6px; text-align: center;
+  font-family: inherit; font-size: 11.5px; font-weight: 600; line-height: 1.2; color: var(--accent);
+  background: var(--bg-secondary); border: 1px solid var(--divider); border-bottom-width: 2px;
 }

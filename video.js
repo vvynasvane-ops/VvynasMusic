@@ -32,7 +32,8 @@
    ========================================================================= */
 (() => {
 "use strict";
-const { idbGet, idbSet, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory } = window.VV;
+const { idbGet, idbSet, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
+        createVolumeController, volumeIconMarkup, renderShortcutList } = window.VV;
 
 const VIDEO_EXT = /\.(mp4|mkv|webm|mov|m4v|avi)$/i;
 const M4A_EXT = /\.m4a$/i;
@@ -110,6 +111,8 @@ const els = {
   ccLoadFileRow: $("#ccLoadFileRow"), ccCloseBtn: $("#ccCloseBtn"), subtitleFileInput: $("#vpSubtitleFile"),
   audBtn: $("#audBtn"), audModalOverlay: $("#audModalOverlay"), audList: $("#audList"), audCloseBtn: $("#audCloseBtn"),
   toast: $("#toast"),
+  osd: $("#vpOsd"),
+  kbBtn: $("#kbBtn"), kbModalOverlay: $("#kbModalOverlay"), kbCloseBtn: $("#kbCloseBtn"),
 };
 
 function toast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => els.toast.classList.remove("show"), 2400); }
@@ -119,10 +122,25 @@ function extOf(name) { return (name.split(".").pop() || "").toLowerCase(); }
 function baseName(name) { return name.replace(/\.[^./]+$/, "").toLowerCase(); }
 
 els.backBtn.addEventListener("click", () => { window.location.href = "index.html"; });
-els.fullscreenBtn.addEventListener("click", () => {
-  if (els.video.requestFullscreen) els.video.requestFullscreen().catch(() => toast("Fullscreen not available."));
+/* Fullscreen targets the whole stage (not the bare <video>) so the on-screen
+   display for volume / seek keeps showing, and the keyboard shortcuts keep
+   working, while fullscreen. iPhone Safari only supports video-element
+   fullscreen (with its own native controls), so it falls back to that. */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (!els.video.src) { toast("Pick a video first."); return; }
+  if (isFullscreen()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+    return;
+  }
+  const stage = els.vpStage;
+  const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (req) { const r = req.call(stage); if (r && r.catch) r.catch(() => toast("Fullscreen not available.")); }
+  else if (els.video.webkitEnterFullscreen) els.video.webkitEnterFullscreen();
   else toast("Fullscreen not supported in this browser.");
-});
+}
+els.fullscreenBtn.addEventListener("click", toggleFullscreen);
 
 /* ---------------------------------------------------------------------
    Folder access / scanning
@@ -509,13 +527,102 @@ els.subtitleFileInput.addEventListener("change", async (e) => {
 });
 
 /* ---------------------------------------------------------------------
-   Keyboard shortcuts — "V" cycles subtitle language tracks (Off → each
-   detected language → Off), matching the same convention VLC uses.
+   Volume control — one controller drives the slider, the mute button and
+   the keyboard shortcuts. Remembered between visits (not the mute flag),
+   separately from the music player's volume.
    --------------------------------------------------------------------- */
+const volume = createVolumeController(els.video, { storageKey: "volume-video", step: 5 });
+const volUI = { slider: $("#vpVolSlider"), button: $("#vpMuteBtn"), icon: $("#vpVolIcon"), value: $("#vpVolValue"), row: $("#vpVolumeRow") };
+volume.subscribe((v) => {
+  volUI.slider.value = v.level;
+  volUI.slider.style.setProperty("--vol-pct", v.level + "%");
+  volUI.slider.setAttribute("aria-valuetext", v.muted ? "Muted" : v.volume + " percent");
+  volUI.icon.innerHTML = volumeIconMarkup(v.level);
+  volUI.button.classList.toggle("muted", v.level === 0);
+  volUI.value.textContent = v.muted ? "Muted" : v.volume + "%";
+  volUI.row.classList.toggle("no-volume-slider", !v.supported);
+});
+volUI.slider.addEventListener("input", () => volume.set(Number(volUI.slider.value)));
+volUI.button.addEventListener("click", () => volume.toggleMute());
+
+/** Small on-screen display inside the stage — visible in fullscreen too,
+ *  where the page's toast and sliders are not. */
+function showOsd(text, barPct) {
+  els.osd.innerHTML = `<span>${text}</span>` + (barPct == null ? "" : `<span class="osd-bar"><i style="width:${barPct}%"></i></span>`);
+  els.osd.classList.add("show");
+  clearTimeout(showOsd._t);
+  showOsd._t = setTimeout(() => els.osd.classList.remove("show"), 1100);
+}
+function showVolumeOsd() {
+  const v = volume.state;
+  showOsd(v.level === 0 ? (v.muted ? "🔇 Muted" : "🔇 Volume 0%") : `🔊 Volume ${v.volume}%`, v.level);
+}
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts — this map is what the ⌨ Shortcuts panel shows
+   (catalog: SHORTCUTS.video in shared.js). Keep the two in sync.
+     Space          play / pause          M   mute / unmute
+     Shift + ↑ / ↓  volume ±5%            F   fullscreen on / off
+     ← / →          seek ∓5s              V   cycle subtitle language
+     Shift + ← / →  previous / next video
+   Plain arrows are not used for volume because they scroll the file list.
+   --------------------------------------------------------------------- */
+function isTypingTarget(t) {
+  if (!(t instanceof window.Element)) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file"].includes((t.type || "").toLowerCase());
+}
+function closeShortcutsPanel() { els.kbModalOverlay.classList.remove("open"); }
+els.kbBtn.addEventListener("click", () => els.kbModalOverlay.classList.add("open"));
+els.kbCloseBtn.addEventListener("click", closeShortcutsPanel);
+els.kbModalOverlay.addEventListener("click", (e) => { if (e.target === els.kbModalOverlay) closeShortcutsPanel(); });
+renderShortcutList($("#shortcutList"), "video", $("#shortcutNote"));
+
 window.addEventListener("keydown", (e) => {
-  const tag = (e.target && e.target.tagName) || "";
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
-  if (e.key === "v" || e.key === "V") { e.preventDefault(); cycleSubtitleTrack(); }
+  if (e.key === "Escape" && els.kbModalOverlay.classList.contains("open")) { closeShortcutsPanel(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return; // never steal browser/OS combos
+  const t = e.target;
+  if (isTypingTarget(t)) return;
+  const key = e.key;
+  const isRange = t instanceof window.Element && t.tagName === "INPUT" && t.type === "range";
+  const isVolSlider = isRange && t.classList.contains("vol-slider");
+  const hasMedia = !!els.video.src;
+
+  if (e.code === "Space") {
+    // A focused button/link has its own Space meaning (activating it).
+    const interactive = t instanceof window.Element && (t.tagName === "BUTTON" || t.tagName === "A" ||
+      t.closest('[role="button"], [tabindex]'));
+    if (interactive || e.repeat || !hasMedia) return; // no video yet → leave Space to scroll the page
+    e.preventDefault(); togglePlay();
+    return;
+  }
+
+  if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+    if (isRange && !(isVolSlider && e.shiftKey && (key === "ArrowUp" || key === "ArrowDown"))) return; // sliders keep their own arrow keys
+    if (els.kbModalOverlay.classList.contains("open")) return;
+    if (e.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      e.preventDefault();
+      if (!volume.supported) { toast("Volume is controlled by your device's buttons in this browser."); return; }
+      volume.nudge(key === "ArrowUp" ? 1 : -1);
+      showVolumeOsd();
+    } else if (e.shiftKey && key === "ArrowRight") { if (!e.repeat) { e.preventDefault(); next(); } }
+    else if (e.shiftKey && key === "ArrowLeft") { if (!e.repeat) { e.preventDefault(); prev(); } }
+    else if (!e.shiftKey) {
+      if (!hasMedia || !isFinite(els.video.duration)) return;
+      e.preventDefault();
+      const d = key === "ArrowRight" ? 5 : -5;
+      els.video.currentTime = Math.max(0, Math.min(els.video.duration, els.video.currentTime + d));
+      showOsd(`${d > 0 ? "⏩ +5s" : "⏪ −5s"} · ${fmtTime(els.video.currentTime)}`);
+    }
+    return;
+  }
+
+  if (e.shiftKey || e.repeat) return;
+  const k = key.toLowerCase();
+  if (k === "m") { e.preventDefault(); volume.toggleMute(); showVolumeOsd(); }
+  else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+  else if (k === "v") { e.preventDefault(); cycleSubtitleTrack(); }
 });
 
 /* ---------------------------------------------------------------------
@@ -548,6 +655,7 @@ async function applyStoredAccentColors() {
    Boot
    --------------------------------------------------------------------- */
 async function boot() {
+  volume.load();
   await applyStoredAccentColors();
   const handle = await getStoredHandle();
   if (handle) {
