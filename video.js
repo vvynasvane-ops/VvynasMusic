@@ -589,11 +589,14 @@ window.addEventListener("keydown", (e) => {
   const isVolSlider = isRange && t.classList.contains("vol-slider");
   const hasMedia = !!els.video.src;
 
+  // Space — the app-wide play/pause toggle, unconditionally, same as the
+  // music player: it works no matter what's focused (a button, a link, a
+  // row) or what state the page is in. isTypingTarget above is the only
+  // carve-out. togglePlay() already no-ops safely if nothing's loaded
+  // yet, so this doesn't need its own "no media" guard either — Space
+  // just does nothing rather than sometimes toggling, sometimes scrolling.
   if (e.code === "Space") {
-    // A focused button/link has its own Space meaning (activating it).
-    const interactive = t instanceof window.Element && (t.tagName === "BUTTON" || t.tagName === "A" ||
-      t.closest('[role="button"], [tabindex]'));
-    if (interactive || e.repeat || !hasMedia) return; // no video yet → leave Space to scroll the page
+    if (e.repeat) return;
     e.preventDefault(); togglePlay();
     return;
   }
