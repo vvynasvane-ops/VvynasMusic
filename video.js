@@ -285,6 +285,7 @@ async function playId(id) {
   }
 
   els.video.src = state.objectUrl;
+  resetBufferedUI(); // otherwise the new file starts with the PREVIOUS one's loaded-so-far band still showing
   els.video.load();
   els.video.play().catch(() => {});
   els.title.textContent = item.name;
@@ -380,8 +381,49 @@ els.video.addEventListener("timeupdate", () => {
   els.seek.value = (els.video.currentTime / els.video.duration) * 100;
   els.cur.textContent = fmtTime(els.video.currentTime);
   els.total.textContent = fmtTime(els.video.duration);
+  updateSeekBuffered(); // cheap enough per tick, and keeps the buffered band live even on browsers that fire "progress" only sparsely
 });
 els.seek.addEventListener("input", () => { if (els.video.duration) els.video.currentTime = (els.seek.value / 100) * els.video.duration; });
+
+/* ---------------------------------------------------------------------
+   Buffered/loading indicator — same idea as the music player's
+   .seek-buffered (see app.js), adapted for this page's native
+   <input type=range> scrubber: two CSS custom properties, --play-pct
+   and --buf-pct, drive the .vp-seek gradient in style.css, so one bar
+   shows both how far playback has reached (solid --accent) AND how
+   much of the file has actually finished loading (softer --accent-dim)
+   at once, instead of the old flat "it's all here" assumption.
+   --------------------------------------------------------------------- */
+/** Reads els.video.buffered (a list of disjoint loaded time ranges — a
+ *  seek can leave a gap between what was already loaded and what's
+ *  loading now) and pushes both the playback and buffered percentages
+ *  onto the scrub bar's CSS variables. Also toggles .fully-loaded for a
+ *  small settle-glow once the whole file has actually finished loading. */
+function updateSeekBuffered() {
+  if (!els.video.duration || !isFinite(els.video.duration)) return;
+  const playPct = (els.video.currentTime / els.video.duration) * 100;
+  const ranges = els.video.buffered;
+  let end = 0;
+  for (let i = 0; i < ranges.length; i++) {
+    if (els.video.currentTime >= ranges.start(i) && els.video.currentTime <= ranges.end(i)) { end = ranges.end(i); break; }
+    end = Math.max(end, ranges.end(i));
+  }
+  const bufPct = Math.min(100, (end / els.video.duration) * 100);
+  els.seek.style.setProperty("--play-pct", playPct + "%");
+  els.seek.style.setProperty("--buf-pct", Math.max(playPct, bufPct) + "%"); // never let rounding show the loaded band trailing behind the playhead
+  els.seek.classList.toggle("fully-loaded", bufPct >= 99.9);
+}
+/** Called right after a new src is assigned, so the scrubber doesn't
+ *  keep showing the PREVIOUS file's loaded-so-far band for the instant
+ *  before the new file's first progress/loadedmetadata event corrects it. */
+function resetBufferedUI() {
+  els.seek.style.setProperty("--play-pct", "0%");
+  els.seek.style.setProperty("--buf-pct", "0%");
+  els.seek.classList.remove("fully-loaded");
+}
+els.video.addEventListener("progress", updateSeekBuffered);
+els.video.addEventListener("loadedmetadata", updateSeekBuffered);
+els.video.addEventListener("canplaythrough", updateSeekBuffered); // browsers that report one late "fully buffered" range rather than incremental ticks still land on an accurate final state
 
 [els.videoList, els.m4aList].forEach(list => list.addEventListener("click", (e) => {
   const row = e.target.closest(".vp-row");

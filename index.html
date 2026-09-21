@@ -201,7 +201,7 @@
 
   <!-- ============ MINI PLAYER ============ -->
   <div class="mini-player with-sidebar hidden" id="miniPlayer">
-    <div class="mini-progress"><div class="mini-progress-fill" id="miniProgressFill"></div></div>
+    <div class="mini-progress"><div class="mini-progress-buffered" id="miniProgressBuffered"></div><div class="mini-progress-fill" id="miniProgressFill"></div></div>
     <div class="art" id="miniArt" style="width:46px;height:46px;border-radius:8px;"></div>
     <div class="meta">
       <div class="title" id="miniTitle">—</div>
@@ -267,6 +267,7 @@
 
       <div class="player-seek">
         <div class="seek-track" id="seekTrack">
+          <div class="seek-buffered" id="seekBuffered" title="How much of the file has finished loading"></div>
           <div class="seek-fill" id="seekFill"></div>
           <div class="seek-handle" id="seekHandle" style="left:0%"></div>
         </div>

@@ -556,8 +556,6 @@ button:active, .nav-item:active, .tabbar button:active,
   font-size: 13.5px; padding: 12px 22px; border-radius: 999px; width: 100%; margin-top: 12px; transition: all .2s;
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-.btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-
 
 /* ---------- Song rows / grid ---------- */
 .section-label {
@@ -755,7 +753,13 @@ button:active, .nav-item:active, .tabbar button:active,
 .mini-player .controls svg { width: 18px; height: 18px; }
 .mini-player .play-btn { color: var(--accent) !important; }
 .mini-progress { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--divider); }
-.mini-progress-fill { height: 100%; background: var(--accent); width: 0%; }
+/* Sits behind .mini-progress-fill: a quiet preview of how much of the
+   file has actually finished loading, ahead of where playback has
+   reached. At 2px tall there's no room for texture, so it stays a flat
+   translucent band — the full player's seek bar (see .seek-buffered)
+   is where the fuller treatment lives. */
+.mini-progress-buffered { position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: var(--accent-dim); transition: width .3s ease; }
+.mini-progress-fill { position: relative; height: 100%; background: var(--accent); width: 0%; }
 
 /* ---------- Bottom tab bar (mobile) ---------- */
 .tabbar { display: none; }
@@ -842,8 +846,32 @@ button:active, .nav-item:active, .tabbar button:active,
 
 .player-seek { width: 100%; max-width: 460px; margin-top: 26px; }
 .seek-track { position: relative; height: 4px; background: var(--divider); border-radius: 4px; cursor: pointer; }
+/* Two variables sharing one bar: .seek-fill (solid --accent, on top) is
+   how far playback has reached; .seek-buffered (softer --accent-dim,
+   underneath) is how much of the file has actually finished loading —
+   always at least as far along as .seek-fill, usually further ahead of
+   it for anything still streaming in. A faint diagonal shimmer plays
+   across the buffered band while it's still growing, the same visual
+   language as a download bar, and settles to a still, gently glowing
+   fill the moment loading actually completes (.loaded) — intensity
+   scales down rather than the effect just vanishing, so "fully loaded"
+   reads as a small settle, not a jump cut. */
+.seek-buffered {
+  position: absolute; left: 0; top: 0; height: 100%; width: 0%; border-radius: 4px;
+  background: var(--accent-dim); overflow: hidden; transition: width .3s ease, box-shadow .4s ease;
+}
+.seek-buffered::after {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(45deg, rgba(255,255,255,.32) 0 5px, transparent 5px 10px);
+  background-size: 200% 100%; opacity: .5;
+  animation: seek-buffer-shimmer 1.1s linear infinite;
+}
+.seek-buffered.loaded { box-shadow: 0 0 7px var(--accent-dim); }
+.seek-buffered.loaded::after { animation: none; opacity: 0; transition: opacity .5s ease; }
+@keyframes seek-buffer-shimmer { from { background-position: 0 0; } to { background-position: -20px 0; } }
+@media (prefers-reduced-motion: reduce) { .seek-buffered::after { animation: none; opacity: .3; } }
 .seek-fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); border-radius: 4px; }
-.seek-handle { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); transform: translate(-50%,-50%); box-shadow: 0 0 8px var(--accent); }
+.seek-handle { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); transform: translate(-50%,-50%); box-shadow: 0 0 8px var(--accent); z-index: 2; }
 .seek-times { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 8px; font-variant-numeric: tabular-nums; }
 
 .player-controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 22px; }
@@ -1213,6 +1241,32 @@ html.rage-active #heartTitleCanvas { display: block; }
 .vol-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; }
 .vol-slider::-moz-range-track { background: transparent; height: 4px; }
 .vol-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+
+/* Video player's scrub bar — same "no native chrome, paint our own
+   fill" trick as .vol-slider above, but with a second stop: the solid
+   --accent up to --play-pct (how far playback has reached) followed by
+   a softer --accent-dim band up to --buf-pct (how much of the file has
+   actually finished loading), then plain --divider for the untouched
+   rest. Both custom properties are pushed from video.js on every
+   timeupdate/progress tick — see updateSeekBuffered() there. */
+.vp-seek {
+  -webkit-appearance: none; appearance: none; height: 5px; border-radius: 4px; outline: none; cursor: pointer; min-width: 0;
+  background: linear-gradient(to right,
+    var(--accent) 0%, var(--accent) var(--play-pct, 0%),
+    var(--accent-dim) var(--play-pct, 0%), var(--accent-dim) var(--buf-pct, 0%),
+    var(--divider) var(--buf-pct, 0%), var(--divider) 100%);
+}
+.vp-seek::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; box-shadow: 0 0 6px var(--accent-dim); border: none; margin-top: 0;
+}
+.vp-seek::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; }
+.vp-seek::-moz-range-track { background: transparent; height: 5px; }
+.vp-seek:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Once the whole file has finished loading, the buffered band gets a
+   brief soft glow instead of just sitting there flat — a small, quiet
+   "fully loaded" cue rather than another toast to dismiss. */
+.vp-seek.fully-loaded { filter: drop-shadow(0 0 3px var(--accent-dim)); }
 .vol-mute-btn {
   width: 36px; height: 36px; flex: none; display: flex; align-items: center; justify-content: center;
   border-radius: 50%; color: var(--text-secondary); background: var(--ripple); transition: color .2s, background .2s;

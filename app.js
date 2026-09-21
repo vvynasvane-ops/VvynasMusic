@@ -107,6 +107,7 @@ const els = {
   miniPrevBtn: $("#miniPrevBtn"),
   miniNextBtn: $("#miniNextBtn"),
   miniProgressFill: $("#miniProgressFill"),
+  miniProgressBuffered: $("#miniProgressBuffered"),
 
   playerOverlay: $("#playerOverlay"),
   playerCollapseBtn: $("#playerCollapseBtn"),
@@ -119,6 +120,7 @@ const els = {
   playerArtist: $("#playerArtist"),
   playerSourceLabel: $("#playerSourceLabel"),
   seekTrack: $("#seekTrack"),
+  seekBuffered: $("#seekBuffered"),
   seekFill: $("#seekFill"),
   seekHandle: $("#seekHandle"),
   curTime: $("#curTime"),
@@ -1949,6 +1951,7 @@ async function loadAndPlayCurrent() {
   state.objectUrl = URL.createObjectURL(file);
   const myLoadToken = ++audioLoadToken; // guards against a stale play()/error firing after a newer track has already started loading
   audio.src = state.objectUrl;
+  resetBufferedUI(); // otherwise the new track would start with the *previous* song's "fully loaded" bar still showing, until the first progress/loadedmetadata event corrects it
   RageMode.ensureAudioGraph();
   try {
     await audio.play();
@@ -2170,7 +2173,50 @@ audio.addEventListener("timeupdate", () => {
   els.miniProgressFill.style.width = pct + "%";
   els.curTime.textContent = fmtTime(audio.currentTime);
   els.totalTime.textContent = fmtTime(audio.duration);
+  updateBufferedUI(); // cheap enough to run every tick, and "progress" alone fires too sparsely on some browsers to feel live
 });
+
+/* ---------------------------------------------------------------------
+   Buffered/loading indicator — the seek bar shows two variables at
+   once: .seek-fill (solid, on top) is how far PLAYBACK has reached;
+   .seek-buffered (softer, underneath — same for the mini player's
+   .mini-progress-buffered) is how much of the file has actually
+   finished LOADING, which for anything but a tiny file is a real,
+   separate number worth showing rather than just implying "it's all
+   here" the instant a track starts playing.
+   --------------------------------------------------------------------- */
+/** Reads the browser's own record of what's been downloaded/decoded so
+ *  far (audio.buffered — a list of disjoint time ranges, since a seek
+ *  can leave a gap between what was already loaded and what's loading
+ *  now) and reports how far the range covering — or nearest to — the
+ *  playhead actually reaches. Marks the bar "loaded" once that reaches
+ *  effectively the full duration, which turns off the shimmer in favor
+ *  of a quiet steady glow (see .seek-buffered.loaded in style.css). */
+function updateBufferedUI() {
+  if (!audio.duration || !isFinite(audio.duration)) return;
+  const ranges = audio.buffered;
+  let end = 0;
+  for (let i = 0; i < ranges.length; i++) {
+    if (audio.currentTime >= ranges.start(i) && audio.currentTime <= ranges.end(i)) { end = ranges.end(i); break; }
+    end = Math.max(end, ranges.end(i));
+  }
+  const pct = Math.min(100, (end / audio.duration) * 100);
+  const fullyLoaded = pct >= 99.9;
+  if (els.seekBuffered) { els.seekBuffered.style.width = pct + "%"; els.seekBuffered.classList.toggle("loaded", fullyLoaded); }
+  if (els.miniProgressBuffered) els.miniProgressBuffered.style.width = pct + "%";
+}
+/** Called right after a new src is assigned, so the bar doesn't sit at
+ *  the PREVIOUS track's (possibly 100%, possibly "loaded"-glowing)
+ *  width for the split second before the new file's first progress/
+ *  loadedmetadata event arrives to correct it. */
+function resetBufferedUI() {
+  if (els.seekBuffered) { els.seekBuffered.style.width = "0%"; els.seekBuffered.classList.remove("loaded"); }
+  if (els.miniProgressBuffered) els.miniProgressBuffered.style.width = "0%";
+}
+audio.addEventListener("progress", updateBufferedUI);
+audio.addEventListener("loadedmetadata", updateBufferedUI);
+audio.addEventListener("canplaythrough", updateBufferedUI); // browsers that report a single, late "fully buffered" range rather than incremental progress ticks still get an accurate final state here
+
 audio.addEventListener("ended", () => nextSong(true));
 audio.addEventListener("play", () => { state.isPlaying = true; setPlayIcon(true); });
 audio.addEventListener("pause", () => { state.isPlaying = false; setPlayIcon(false); });
