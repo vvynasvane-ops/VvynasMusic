@@ -27,7 +27,13 @@
 <link rel="stylesheet" href="style.css">
 <style>
   body { overflow-y: auto; overflow-x: hidden; background: #000000; font-family: 'Courier New', ui-monospace, monospace; }
-  #djVisualizer { position: fixed; inset: 0; z-index: 0; }
+  /* <canvas> is a replaced element (like <img>) — position:fixed;inset:0
+     alone doesn't stretch it to the viewport the way it would a <div>; it
+     was quietly rendering at its intrinsic default size (300×150) pinned
+     to the top-left corner instead of covering the screen. Explicit
+     width/height forces it full-bleed, and canvas.clientWidth/clientHeight
+     (used by Visualizer.resize()) then report the real viewport size. */
+  #djVisualizer { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; }
   #djScrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(2,4,8,.4) 0%, rgba(2,4,8,.12) 30%, rgba(2,4,8,.12) 70%, rgba(2,4,8,.45) 100%); }
   #djWrap { position: relative; z-index: 2; max-width: 720px; margin: 0 auto; padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(60px + env(safe-area-inset-bottom,0px)); }
 
@@ -47,8 +53,13 @@
      so every label gets a soft shadow rather than a flat opaque panel. */
   .dj-card, .dj-topbar, .queue-row, #shoutoutText { text-shadow: 0 1px 4px rgba(0,0,0,.7); }
   .deck-meta .t, .deck-meta .a, .dj-status, .mixer-labels, .bass-label-row span, .deck-label { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
-  .dj-decks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 520px) { .dj-decks { grid-template-columns: 1fr; } }
+  .dj-decks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 520px) { .dj-decks { grid-template-columns: minmax(0, 1fr); } }
+  /* Grid items get an implicit min-width:auto too (the same gotcha flex
+     items have) — without this, a track's column refuses to shrink below
+     its longest unwrapped text, which is what let a long title blow
+     straight through the card edge instead of masking. */
+  .deck { min-width: 0; }
 
   .deck-label { font-size: 10.5px; letter-spacing: .16em; color: #666; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
   .deck-label .badge { font-size: 9.5px; color: #FF2D78; }
@@ -56,8 +67,24 @@
   .deck-art { width: 56px; height: 56px; border-radius: 10px; flex: none; overflow: hidden; background: #111; display: flex; align-items: center; justify-content: center; color: #444; }
   .deck-art img { width: 100%; height: 100%; }
   .deck-meta { min-width: 0; }
-  .deck-meta .t { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck-meta .t { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; }
   .deck-meta .a { font-size: 11px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Marquee: long titles used to be hard-truncated with an ellipsis (or, in
+     the song picker, had no overflow handling at all and visibly spilled
+     past the card/modal edge). Instead every title now sits in a
+     scroll-masked strip; JS measures overflow and only elements that don't
+     fit get animated — short titles stay put. The full name always stays
+     intact, it just glides into view. */
+  .marquee-track { display: inline-block; white-space: nowrap; will-change: transform; }
+  .marquee-active .marquee-track {
+    animation: djTitleMarquee var(--marquee-duration, 8s) cubic-bezier(.45,0,.25,1) infinite;
+  }
+  @keyframes djTitleMarquee {
+    0%, 14%   { transform: translateX(0); }
+    45%, 55%  { transform: translateX(var(--marquee-shift, 0)); }
+    86%, 100% { transform: translateX(0); }
+  }
   .deck-pitch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
   .deck-pitch-row span { font-size: 9.5px; color: #666; flex: none; }
   .deck-pitch-row input[type=range] { flex: 1; accent-color: #00FFD4; }
@@ -87,7 +114,9 @@
   .queue-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
   .queue-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; background: rgba(255,255,255,.03); cursor: pointer; }
   .queue-row:hover { background: rgba(255,255,255,.07); }
-  .queue-row .t { flex: 1; font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-row .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; font-size: 12px; color: #ddd; white-space: nowrap; }
+  .queue-row .t .q-arrow { flex: none; }
+  .queue-row .t .marquee-mask { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
   .queue-row .a { font-size: 10.5px; color: #777; flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .queue-row .rm { color: #666; padding: 2px 6px; flex: none; }
   .queue-empty { font-size: 12px; color: #666; text-align: center; padding: 18px 0; }
@@ -113,7 +142,11 @@
   .dj-modal input[type=text] { width: 100%; background: #16161f; border: 1px solid rgba(255,255,255,.15); color: #fff; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
   .dj-modal-row { display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: #ddd; }
   .dj-modal-row:hover { background: rgba(255,255,255,.06); }
-  .dj-modal-row .a { color: #888; font-size: 11px; margin-left: auto; }
+  /* Was unstyled and unbounded, so a long title just ran the row past the
+     modal's edge instead of wrapping or scrolling — the actual "spill"
+     bug. Now it's a proper flexed, overflow-masked marquee strip. */
+  .dj-modal-row .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .dj-modal-row .a { color: #888; font-size: 11px; margin-left: auto; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dj-modal-close { width: 100%; margin-top: 10px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,.08); color: #ccc; border: none; font-size: 12.5px; }
   .dj-about-text { font-size: 12px; color: #bbb; line-height: 1.9; white-space: pre-line; }
 </style>

@@ -217,6 +217,37 @@ function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({ "&": "
 function setStatus(msg) { els.status.textContent = msg; }
 
 /* ---------------------------------------------------------------------
+   Marquee — reveal long titles in full instead of ellipsis-clipping them.
+   `mask` is any element whose only content is a single ".marquee-track"
+   child holding the full (untruncated) text. We measure the real overflow
+   and only animate elements that actually need it, so short titles never
+   move. Speed scales with distance so a 6-word title and a 2-word title
+   both feel like they're drifting at the same pace.
+   --------------------------------------------------------------------- */
+function applyMarquee(mask) {
+  const track = mask.querySelector(".marquee-track");
+  if (!track) return;
+  mask.classList.remove("marquee-active");
+  mask.style.removeProperty("--marquee-shift");
+  mask.style.removeProperty("--marquee-duration");
+  const overflow = track.scrollWidth - mask.clientWidth;
+  if (overflow > 4) {
+    const shift = -(overflow + 22); // small trailing pad so the last letters get a beat before reversing
+    const duration = Math.min(13, Math.max(4.5, Math.abs(shift) / 42 + 3));
+    mask.style.setProperty("--marquee-shift", shift + "px");
+    mask.style.setProperty("--marquee-duration", duration.toFixed(2) + "s");
+    mask.classList.add("marquee-active");
+  }
+}
+function setMarqueeText(mask, text) {
+  mask.innerHTML = `<span class="marquee-track">${escapeHtml(text)}</span>`;
+  requestAnimationFrame(() => applyMarquee(mask));
+}
+function marqueeAll(root) {
+  requestAnimationFrame(() => root.querySelectorAll(".marquee-mask, .deck-meta .t, .dj-modal-row .t").forEach(applyMarquee));
+}
+
+/* ---------------------------------------------------------------------
    Shoutouts
    --------------------------------------------------------------------- */
 const SHOUTOUT_PHRASES = [
@@ -360,7 +391,7 @@ async function loadDeck(letter, song) {
   const deck = deckState(letter), ui = deckEls(letter);
   deck.song = song;
   releaseDeck(letter, false);
-  ui.title.textContent = song.title;
+  setMarqueeText(ui.title, song.title);
   ui.artist.textContent = song.artist;
   ui.art.innerHTML = `<img src="${generatedArt(song.title + song.artist + song.id, 120)}" alt="">`;
   deckArtUrl(song).then((url) => { if (deck.song === song) ui.art.innerHTML = `<img src="${url}" alt="">`; });
@@ -416,7 +447,7 @@ function releaseDeck(letter, resetUI) {
   deck.prepared = false; deck.playing = false;
   if (resetUI) {
     const ui = deckEls(letter);
-    ui.title.textContent = "No track loaded"; ui.artist.textContent = "Tap select";
+    setMarqueeText(ui.title, "No track loaded"); ui.artist.textContent = "Tap select";
     ui.art.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg>';
     ui.count.textContent = ""; deck.song = null;
   }
@@ -578,10 +609,11 @@ function renderQueue() {
   if (!state.djQueue.length) { els.queueList.innerHTML = '<div class="queue-empty">Queue is empty — add tracks to auto-load when a deck finishes.</div>'; return; }
   els.queueList.innerHTML = state.djQueue.map((s, i) => `
     <div class="queue-row" data-idx="${i}">
-      <span class="t">▶ ${escapeHtml(s.title)}</span>
+      <span class="t"><span class="q-arrow">▶</span><span class="marquee-mask"><span class="marquee-track">${escapeHtml(s.title)}</span></span></span>
       <span class="a">${escapeHtml(s.artist)}</span>
       <button class="rm" data-remove="${i}">✕</button>
     </div>`).join("");
+  marqueeAll(els.queueList);
 }
 els.queueList.addEventListener("click", (e) => {
   const rmBtn = e.target.closest("[data-remove]");
@@ -618,8 +650,9 @@ function renderPickerList(q) {
   const query = q.trim().toLowerCase();
   const list = state.allSongs.filter(s => !query || s.title.toLowerCase().includes(query) || s.artist.toLowerCase().includes(query)).slice(0, 200);
   els.pickerList.innerHTML = list.length
-    ? list.map(s => `<div class="dj-modal-row" data-id="${s.id}"><span>${escapeHtml(s.title)}</span><span class="a">${escapeHtml(s.artist)}</span></div>`).join("")
+    ? list.map(s => `<div class="dj-modal-row" data-id="${s.id}"><span class="t"><span class="marquee-track">${escapeHtml(s.title)}</span></span><span class="a">${escapeHtml(s.artist)}</span></div>`).join("")
     : `<div class="dj-modal-row" style="color:#666;">No matches.</div>`;
+  marqueeAll(els.pickerList);
 }
 els.pickerSearch.addEventListener("input", () => renderPickerList(els.pickerSearch.value));
 els.pickerList.addEventListener("click", (e) => {
