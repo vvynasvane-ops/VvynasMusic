@@ -568,12 +568,21 @@ function buildUI() {
   root.querySelectorAll(".vq-tabs button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
   $("#vqSaveOk").addEventListener("click", doSave);
   $("#vqSaveCancel").addEventListener("click", () => UI.el.saveRow.classList.add("hidden"));
-  UI.el.saveName.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); else if (e.key === "Escape") { e.stopPropagation(); UI.el.saveRow.classList.add("hidden"); } });
+  UI.el.saveName.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); });
   bindCanvas();
   window.addEventListener("resize", () => { if (api.isOpen()) sizeCanvas(); });
-  // Escape closes the EQ before anything underneath (player, lyrics…) reacts
+  // Escape closes the EQ before anything underneath (player, lyrics…) reacts —
+  // captured at the window level so it always wins regardless of what has
+  // focus. One layer first: if the "save a custom preset" row is open,
+  // Escape backs out of just that (keeping the panel itself open), same as
+  // it would for any other in-panel popover — only a second Escape (or one
+  // pressed while the row isn't open) closes the whole panel.
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && api.isOpen()) { e.stopImmediatePropagation(); e.preventDefault(); close(); }
+    if (e.key === "Escape" && api.isOpen()) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      if (!UI.el.saveRow.classList.contains("hidden")) { UI.el.saveRow.classList.add("hidden"); UI.el.saveName.blur(); return; }
+      close();
+    }
     else if (e.key === "Tab" && api.isOpen()) trapFocus(e);
   }, true);
 }

@@ -22,6 +22,8 @@ const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, i
 // all agree on what counts as "a song" — see the comment there for the
 // full list and rationale.
 const AUDIO_EXT = window.VV.AUDIO_EXT;
+const AUDIO_MIME_BY_EXT = window.VV.AUDIO_MIME_BY_EXT;
+const typedBlob = window.VV.typedBlob;
 const RECENT_CAP = 100;
 // Sidecar lyric files ("Song.lrc" / "Song.txt" next to "Song.mp3") are indexed during the folder
 // scan by their path minus extension, and only ever *read* when that song's lyrics are opened.
@@ -61,6 +63,7 @@ const state = {
   customArt: new Map(),  // songId -> custom album art data URL (uploaded from device), see loadUserData
   embeddedArt: new Map(), // songId -> the song file's own cover art, extracted from its tag (see loadUserData / loadMetadataProgressively)
   lyricRefs: new Map(),  // "folder/song" (lower-case, no extension) -> File / FileSystemFileHandle of a sidecar .lrc/.txt
+  unplayableIds: new Set(), // loop guard for handleUnplayableSong — see there
   externalPlaylists: [], // {id, name, type: "playlist"|"channel"|"search", embedId?, query?} — see parseYouTubeInput
 };
 
@@ -1910,8 +1913,12 @@ function navigateTo(view) {
 async function getFileForSong(songId) {
   const ref = state.fileRefs.get(songId);
   if (!ref) return null;
-  if (state.usingFSApi && ref.getFile) return await ref.getFile();
-  return ref; // already a File
+  const file = state.usingFSApi && ref.getFile ? await ref.getFile() : ref; // already a File otherwise
+  const song = state.songs.find(s => s.id === songId);
+  // Re-wrap with the correct MIME type — File.type is frequently blank or
+  // wrong for anything past mp3/m4a/wav (see AUDIO_MIME_BY_EXT in shared.js),
+  // which can make a browser refuse a file its decoder could actually play.
+  return song ? typedBlob(file, song.ext, AUDIO_MIME_BY_EXT) : file;
 }
 
 async function playSongId(songId, queueList) {
@@ -1971,6 +1978,11 @@ async function loadAndPlayCurrent() {
   if (!song) return;
   const file = await getFileForSong(songId);
   if (!file) { toast("Couldn't read that file."); return; }
+  // Ask up front rather than waiting on a play()/error round-trip: if the browser
+  // already knows it has zero support for this container/codec, skip straight to
+  // the same graceful "can't play this, moving on" path instead of stalling on it.
+  const mime = AUDIO_MIME_BY_EXT[song.ext];
+  if (mime && audio.canPlayType(mime) === "") { handleUnplayableSong(song); return; }
   if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
   state.objectUrl = URL.createObjectURL(file);
   const myLoadToken = ++audioLoadToken; // guards against a stale play()/error firing after a newer track has already started loading
@@ -1982,6 +1994,7 @@ async function loadAndPlayCurrent() {
     await audio.play();
     if (myLoadToken !== audioLoadToken) return;
     state.isPlaying = true;
+    state.unplayableIds.clear();
   } catch (err) {
     if (myLoadToken !== audioLoadToken) return;
     state.isPlaying = false;
@@ -2005,6 +2018,23 @@ let audioLoadToken = 0;
  *  on automatically instead of stalling the queue. */
 function handleUnplayableSong(song) {
   toast(`Can't play "${song.title}" — unsupported audio format on this device.`, 3200);
+  // Loop guard: with Repeat: All (or a queue that's entirely unsupported formats),
+  // naively auto-skipping forever would just cycle the whole queue endlessly,
+  // re-toasting every ~500ms. Track *which* songs in the CURRENT queue have
+  // failed (self-healing if the queue itself changed since the last failure —
+  // stale ids from a previous, unrelated queue are dropped here rather than
+  // counted against this one) and stop once every unique song in it has been
+  // tried, saying so plainly instead of leaving the person guessing why
+  // playback quietly gave up.
+  state.unplayableIds = new Set([...state.unplayableIds].filter(id => state.queue.includes(id)));
+  state.unplayableIds.add(song.id);
+  const uniqueInQueue = new Set(state.queue).size;
+  if (state.unplayableIds.size >= uniqueInQueue) {
+    state.unplayableIds.clear();
+    setPlayIcon(false);
+    if (uniqueInQueue > 1) toast("None of the songs in this queue could play on this device.", 3600);
+    return;
+  }
   if (state.queue.length > 1) setTimeout(() => nextSong(true), 500);
 }
 

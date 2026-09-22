@@ -690,6 +690,46 @@ async function walkDirectory(dirHandle, extRegex, onProgress) {
    silently stalling. */
 const AUDIO_EXT = /\.(mp3|mp2|m4a|m4b|m4p|m4r|aac|wav|wave|flac|ogg|oga|ogx|opus|weba|webm|wma|aiff|aif|aifc|amr|mka|caf|3gp|3g2|3ga|spx|ape|mpc|tta|wv|au|snd|mid|midi)$/i;
 
+/* Explicit MIME types for every AUDIO_EXT extension — do not rely on
+ * File.type, which the File System Access API and <input webkitdirectory>
+ * frequently report as "" (or something wrong) for anything past mp3/
+ * m4a/wav, depending on OS and browser. An empty/incorrect blob MIME type
+ * can make a browser refuse to even attempt playback of a file its audio
+ * decoder could otherwise handle perfectly well (FLAC and OGG/Opus on
+ * Windows are the most common victims) — so every file gets re-wrapped
+ * with the correct type from this map before its object URL is created
+ * (see typedBlob below). Formats no mainstream browser decodes at all
+ * (APE, Musepack, WavPack, TTA, WMA, AMR, MIDI) are still listed here so
+ * they get a *correct* MIME type too — it won't make them playable, but
+ * it keeps canPlayType() checks and error messages accurate rather than
+ * guessing off a blank type. */
+const AUDIO_MIME_BY_EXT = {
+  mp3: "audio/mpeg", mp2: "audio/mpeg",
+  m4a: "audio/mp4", m4b: "audio/mp4", m4p: "audio/mp4", m4r: "audio/mp4",
+  aac: "audio/aac", wav: "audio/wav", wave: "audio/wav", flac: "audio/flac",
+  ogg: "audio/ogg", oga: "audio/ogg", ogx: "audio/ogg", opus: "audio/ogg", spx: "audio/ogg",
+  weba: "audio/webm", webm: "audio/webm", wma: "audio/x-ms-wma",
+  aiff: "audio/aiff", aif: "audio/aiff", aifc: "audio/aiff",
+  amr: "audio/amr", mka: "audio/x-matroska", caf: "audio/x-caf",
+  "3gp": "audio/3gpp", "3g2": "audio/3gpp2", "3ga": "audio/3gpp",
+  ape: "audio/x-ape", mpc: "audio/x-musepack", tta: "audio/x-tta", wv: "audio/x-wavpack",
+  au: "audio/basic", snd: "audio/basic", mid: "audio/midi", midi: "audio/midi",
+};
+
+/** Re-wraps `file` in a Blob carrying the right MIME type for `ext` (looked
+ *  up in `mimeMap`, e.g. AUDIO_MIME_BY_EXT), but only when that's actually
+ *  an improvement — i.e. the file's own reported type is missing or
+ *  differs. Slicing an already-correct file would be pure overhead, and
+ *  the resulting Blob is otherwise byte-identical, so this is always safe
+ *  to call before URL.createObjectURL(). Returns `file` unchanged if
+ *  there's no mapped type or no File to work with. */
+function typedBlob(file, ext, mimeMap) {
+  if (!file) return file;
+  const mime = mimeMap[(ext || "").toLowerCase()];
+  if (!mime || file.type === mime) return file;
+  return file.slice(0, file.size, mime);
+}
+
 /* ---------------------------------------------------------------------
    Small canvas-drawing helpers mirroring the Android Canvas/Paint API
    used throughout AnimatedThemeView.java, so every theme below reads
@@ -1723,6 +1763,7 @@ const SHORTCUTS = {
     { keys: ["Shift", "→"],     label: "Next video" },
     { keys: ["F"],              label: "Fullscreen on / off" },
     { keys: ["V"],              label: "Cycle subtitle language" },
+    { keys: ["E"],              label: "Open / close equalizer" },
   ],
 };
 const SHORTCUT_NOTES = {
@@ -1750,6 +1791,7 @@ global.VV = {
   openDB,
   FONTS, applyFont,
   fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, AUDIO_EXT,
+  AUDIO_MIME_BY_EXT, typedBlob,
   ThemeEngine, PixieDust, BookTransition, GlobeTitle,
   C, linGrad, radGrad, fillGrad,
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,

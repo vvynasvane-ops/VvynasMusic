@@ -35,16 +35,32 @@
 const { idbGet, idbSet, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
         createVolumeController, volumeIconMarkup, renderShortcutList } = window.VV;
 
-const VIDEO_EXT = /\.(mp4|mkv|webm|mov|m4v|avi)$/i;
+// Deliberately broad, same reasoning as AUDIO_EXT in shared.js: recognize
+// every mainstream video container a person is likely to have on device,
+// not just the handful that are guaranteed to actually decode. Whether a
+// given file then *plays* still depends on the browser having a codec for
+// what's inside it — playId below already warns up front via canPlayType()
+// and explains per-error-code failures, so nothing gets silently skipped
+// during a folder scan just because its extension wasn't on a short list.
+const VIDEO_EXT = /\.(mp4|m4v|mkv|webm|mov|avi|ogv|ogm|ts|m2ts|mts|3gp|3g2|mpg|mpeg|mpe|wmv|flv|f4v|asf|vob|divx|rm|rmvb|qt)$/i;
 const M4A_EXT = /\.m4a$/i;
 const SUB_EXT = /\.(srt|vtt)$/i;
-const ALL_EXT = /\.(mp4|mkv|webm|mov|m4v|avi|m4a|srt|vtt)$/i;
+const ALL_EXT = /\.(mp4|m4v|mkv|webm|mov|avi|ogv|ogm|ts|m2ts|mts|3gp|3g2|mpg|mpeg|mpe|wmv|flv|f4v|asf|vob|divx|rm|rmvb|qt|m4a|srt|vtt)$/i;
 
 // Explicit MIME map — do not rely on File.type, which is frequently empty
 // or wrong for less common extensions (.mkv above all) depending on OS/browser.
+// Formats no mainstream browser decodes at all (WMV, FLV, RealMedia, VOB,
+// DivX-in-AVI) are still mapped to their correct type rather than left
+// blank — it won't make them playable, but it keeps the canPlayType()
+// warning and the per-error-code message below accurate instead of guessing.
 const MIME_BY_EXT = {
   mp4: "video/mp4", m4v: "video/x-m4v", webm: "video/webm", mkv: "video/x-matroska",
-  mov: "video/quicktime", avi: "video/x-msvideo", m4a: "audio/mp4",
+  mov: "video/quicktime", qt: "video/quicktime", avi: "video/x-msvideo",
+  ogv: "video/ogg", ogm: "video/ogg", ts: "video/mp2t", m2ts: "video/mp2t", mts: "video/mp2t",
+  "3gp": "video/3gpp", "3g2": "video/3gpp2", mpg: "video/mpeg", mpeg: "video/mpeg", mpe: "video/mpeg",
+  wmv: "video/x-ms-wmv", flv: "video/x-flv", f4v: "video/mp4", asf: "video/x-ms-asf",
+  vob: "video/dvd", divx: "video/divx", rm: "application/vnd.rn-realmedia", rmvb: "application/vnd.rn-realmedia-vbr",
+  m4a: "audio/mp4",
 };
 
 // Language codes recognized in subtitle filenames, e.g. "Movie.en.srt",
@@ -113,17 +129,17 @@ const els = {
   toast: $("#toast"),
   osd: $("#vpOsd"),
   kbBtn: $("#kbBtn"), kbModalOverlay: $("#kbModalOverlay"), kbCloseBtn: $("#kbCloseBtn"),
+  eqBtn: $("#eqBtn"),
 };
 
 /* Equalizer — same panel and saved settings as the music player. "lazy" = the video element is only
    routed through Web Audio once the EQ is actually engaged (from a tap), so people who never touch it
    get the browser's untouched native playback. */
-if (window.VaneEQ && els.video) {
-  const eqBtn = $("#eqBtn");
+if (window.VaneEQ && els.video && els.eqBtn) {
   window.VaneEQ.attach(els.video, { lazy: true }).then(() => {
-    window.VaneEQ.subscribe((snap) => { eqBtn.classList.toggle("eq-on", snap.engaged); eqBtn.title = snap.engaged ? "Equalizer — on" : "Equalizer"; });
+    window.VaneEQ.subscribe((snap) => { els.eqBtn.classList.toggle("eq-on", snap.engaged); els.eqBtn.title = snap.engaged ? "Equalizer — on" : "Equalizer"; });
   });
-  eqBtn.addEventListener("click", () => window.VaneEQ.toggle(eqBtn));
+  els.eqBtn.addEventListener("click", () => window.VaneEQ.toggle(els.eqBtn));
 }
 
 function toast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => els.toast.classList.remove("show"), 2400); }
@@ -679,6 +695,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "m") { e.preventDefault(); volume.toggleMute(); showVolumeOsd(); }
   else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
   else if (k === "v") { e.preventDefault(); cycleSubtitleTrack(); }
+  else if (k === "e") { e.preventDefault(); window.VaneEQ && window.VaneEQ.toggle(els.eqBtn); }
 });
 
 /* ---------------------------------------------------------------------

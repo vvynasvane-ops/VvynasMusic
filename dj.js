@@ -5,7 +5,7 @@
    ========================================================================= */
 (() => {
 "use strict";
-const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, AUDIO_EXT, C, linGrad, radGrad } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, AUDIO_EXT, AUDIO_MIME_BY_EXT, typedBlob, C, linGrad, radGrad } = window.VV;
 
 /** Same art priority as the main library: a custom uploaded photo, then
  *  the song's own embedded cover (cached in IndexedDB the first time the
@@ -297,7 +297,8 @@ function buildSongList(entries) {
     const id = "dj" + i + "_" + e.path.length + "_" + e.path.slice(-8);
     const filename = e.path.split("/").pop();
     const { artist, title } = titleCaseFromFilename(filename);
-    state.allSongs.push({ id, title: title || filename, artist: artist || "Unknown Artist" });
+    const ext = (filename.split(".").pop() || "").toLowerCase();
+    state.allSongs.push({ id, title: title || filename, artist: artist || "Unknown Artist", ext });
     state.fileRefs.set(id, e.handle);
   });
   els.grant.classList.add("hidden");
@@ -308,8 +309,12 @@ function buildSongList(entries) {
 async function getFile(id) {
   const ref = state.fileRefs.get(id);
   if (!ref) return null;
-  if (state.usingFSApi && ref.getFile) return await ref.getFile();
-  return ref;
+  const file = state.usingFSApi && ref.getFile ? await ref.getFile() : ref;
+  const song = state.allSongs.find(s => s.id === id);
+  // Same fix as the main player and video page: File.type is frequently blank
+  // or wrong for anything past mp3/m4a/wav, which can make a browser refuse a
+  // file its decoder could actually play — see AUDIO_MIME_BY_EXT in shared.js.
+  return song ? typedBlob(file, song.ext, AUDIO_MIME_BY_EXT) : file;
 }
 
 /* ---------------------------------------------------------------------
@@ -367,6 +372,16 @@ async function loadDeck(letter, song) {
   ensureAudioContext();
   const audio = new Audio();
   audio.preload = "auto";
+  // Ask up front — same reasoning as the main player: if the browser already
+  // knows it has zero support for this container/codec, say so plainly
+  // instead of leaving the deck stuck on "LOADING..." forever.
+  const mime = AUDIO_MIME_BY_EXT[song.ext];
+  if (mime && audio.canPlayType(mime) === "") {
+    deck.prepared = false;
+    toast(`Can't load "${song.title}" on Deck ${letter} — unsupported audio format on this device.`, 3200);
+    setStatus(letter === "A" ? "⚔ DECK A — FORMAT NOT SUPPORTED" : "◈ DECK B — FORMAT NOT SUPPORTED");
+    return;
+  }
   deck.objectUrl = URL.createObjectURL(file);
   audio.src = deck.objectUrl;
   deck.audio = audio;
@@ -380,7 +395,16 @@ async function loadDeck(letter, song) {
   }, { once: true });
 
   audio.addEventListener("ended", () => onDeckEnded(letter));
-  audio.addEventListener("error", () => { deck.prepared = false; });
+  /** Covers a file that loads far enough to be assigned but then fails to
+   *  actually decode (corrupt file, or a codec the container claims to
+   *  hold but this browser can't decode) — same graceful, explained
+   *  failure as the canPlayType pre-check above, not a silent dead deck. */
+  audio.addEventListener("error", () => {
+    if (!audio.error || deck.audio !== audio) return;
+    deck.prepared = false;
+    toast(`Can't play "${song.title}" on Deck ${letter} — unsupported audio format on this device.`, 3200);
+    setStatus(letter === "A" ? "⚔ DECK A — PLAYBACK FAILED" : "◈ DECK B — PLAYBACK FAILED");
+  });
 }
 
 function releaseDeck(letter, resetUI) {
