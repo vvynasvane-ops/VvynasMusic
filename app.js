@@ -23,6 +23,10 @@ const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, i
 // full list and rationale.
 const AUDIO_EXT = window.VV.AUDIO_EXT;
 const RECENT_CAP = 100;
+// Sidecar lyric files ("Song.lrc" / "Song.txt" next to "Song.mp3") are indexed during the folder
+// scan by their path minus extension, and only ever *read* when that song's lyrics are opened.
+const LYRIC_EXT = /\.(lrc|txt)$/i;
+const lyricKey = (path) => path.replace(/\.[^./]+$/, "").toLowerCase();
 
 const state = {
   songs: [],            // {id, title, artist, album, folder, ext, duration, size, dateAdded, year, handleRef}
@@ -56,6 +60,7 @@ const state = {
   artCache: new Map(),   // unused (kept for backward compat with any external references)
   customArt: new Map(),  // songId -> custom album art data URL (uploaded from device), see loadUserData
   embeddedArt: new Map(), // songId -> the song file's own cover art, extracted from its tag (see loadUserData / loadMetadataProgressively)
+  lyricRefs: new Map(),  // "folder/song" (lower-case, no extension) -> File / FileSystemFileHandle of a sidecar .lrc/.txt
   externalPlaylists: [], // {id, name, type: "playlist"|"channel"|"search", embedId?, query?} — see parseYouTubeInput
 };
 
@@ -136,6 +141,12 @@ const els = {
   favBtn: $("#favBtn"),
   addToPlaylistBtn: $("#addToPlaylistBtn"),
   queueBtn: $("#queueBtn"),
+  lyricsBtn: $("#lyricsBtn"),
+  eqBtn: $("#eqBtn"),
+  eqSidebarBtn: $("#eqSidebarBtn"),
+  lyricsSidebarBtn: $("#lyricsSidebarBtn"),
+  settingsEqBtn: $("#settingsEqBtn"),
+  settingsLyricsBtn: $("#settingsLyricsBtn"),
 
   sheetOverlay: $("#sheetOverlay"),
   queueSheet: $("#queueSheet"),
@@ -656,14 +667,15 @@ const RageMode = (() => {
     // reliably instead of silently going flat after a mode switch.
     if (sourceConnected) { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {}); return true; }
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioCtx.createMediaElementSource(audio);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.75;
+      // The single shared Web Audio graph lives in eq.js (a media element can only
+      // be routed through Web Audio once, and the equalizer needs the same path).
+      // The beat analyser it hands back keeps Rage Mode's original 256-bin / 0.75
+      // settings, so the reactivity is unchanged.
+      const graph = window.VaneEQ && window.VaneEQ.ensureGraph(audio);
+      if (!graph) throw new Error("shared audio graph unavailable");
+      audioCtx = graph.ctx;
+      analyser = graph.beat;
       dataArray = new Uint8Array(analyser.frequencyBinCount);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
       sourceConnected = true;
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     } catch (err) {
@@ -854,7 +866,14 @@ async function requestFolderAccess() {
 }
 
 els.folderFallbackInput.addEventListener("change", async (e) => {
-  const files = Array.from(e.target.files || []).filter(f => AUDIO_EXT.test(f.name));
+  const everything = Array.from(e.target.files || []);
+  state.lyricRefs = new Map();
+  everything.forEach(f => {
+    if (!LYRIC_EXT.test(f.name)) return;
+    const k = lyricKey(f.webkitRelativePath || f.name);
+    if (!state.lyricRefs.has(k) || /\.lrc$/i.test(f.name)) state.lyricRefs.set(k, f);
+  });
+  const files = everything.filter(f => AUDIO_EXT.test(f.name));
   if (!files.length) { toast("No audio files found in that folder."); return; }
   showConnecting("Reading your folder…", "This stays on your device.");
   state.usingFSApi = false;
@@ -915,6 +934,7 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
   els.storageLabel.textContent = "Scanning your library…";
   setStorageBusy(true);
   const found = [];
+  state.lyricRefs = new Map();
   async function walk(handle, path) {
     for await (const [name, entry] of handle.entries()) {
       const p = path ? `${path}/${name}` : name;
@@ -923,6 +943,9 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
       } else if (entry.kind === "file" && AUDIO_EXT.test(name)) {
         found.push({ handle: entry, path: p, folder: path || "Library Root" });
         if (found.length % 15 === 0) setConnectingStatus(`Found ${found.length} songs so far…`, "Still searching your folders.", true);
+      } else if (entry.kind === "file" && LYRIC_EXT.test(name)) {
+        const k = lyricKey(p);
+        if (!state.lyricRefs.has(k) || /\.lrc$/i.test(name)) state.lyricRefs.set(k, entry); // .lrc (synced) beats .txt
       }
     }
   }
@@ -973,6 +996,7 @@ async function buildLibraryFromEntries(entries, isFsApi) {
       artist: artist || "Unknown Artist",
       album,
       folder: e.folder,
+      relPath: e.path,      // used to pair the song with a sidecar .lrc/.txt
       ext: (filename.split(".").pop() || "").toLowerCase(),
       size: 0,
       duration: 0,
@@ -1951,6 +1975,7 @@ async function loadAndPlayCurrent() {
   state.objectUrl = URL.createObjectURL(file);
   const myLoadToken = ++audioLoadToken; // guards against a stale play()/error firing after a newer track has already started loading
   audio.src = state.objectUrl;
+  if (window.VaneLyrics) window.VaneLyrics.songChanged();
   resetBufferedUI(); // otherwise the new track would start with the *previous* song's "fully loaded" bar still showing, until the first progress/loadedmetadata event corrects it
   RageMode.ensureAudioGraph();
   try {
@@ -3240,6 +3265,18 @@ els.favBtn.addEventListener("click", () => { const id = state.queue[state.queueI
 els.addToPlaylistBtn.addEventListener("click", () => { const id = state.queue[state.queueIndex]; if (id) openPlaylistModal(id); });
 els.queueBtn.addEventListener("click", openQueue);
 
+/* Equalizer + Lyrics (eq.js / lyrics.js). Opened from the full player, the
+   sidebar, Settings, or the E / L keys. Settings closes first so the panel
+   isn't fighting the modal for focus. */
+const openEq = (opener) => window.VaneEQ && window.VaneEQ.toggle(opener);
+const openLyrics = (opener) => window.VaneLyrics && window.VaneLyrics.toggle(opener);
+els.eqBtn.addEventListener("click", () => openEq(els.eqBtn));
+els.lyricsBtn.addEventListener("click", () => openLyrics(els.lyricsBtn));
+els.eqSidebarBtn.addEventListener("click", () => openEq(els.eqSidebarBtn));
+els.lyricsSidebarBtn.addEventListener("click", () => openLyrics(els.lyricsSidebarBtn));
+els.settingsEqBtn.addEventListener("click", () => { closeSettings(); openEq(els.settingsBtn); });
+els.settingsLyricsBtn.addEventListener("click", () => { closeSettings(); openLyrics(els.settingsBtn); });
+
 /* Custom album art — pick a photo from device storage for the song
    currently open in the full player. Any resolution/aspect ratio goes
    in; resizeImageFileToDataUrl (shared.js) normalizes it into a square
@@ -3377,7 +3414,8 @@ function volumeToast() {
      Space          play / pause          M          mute / unmute
      Shift + ↑ / ↓  volume ±5%            S          shuffle on / off
      ← / →          seek ∓5s              R          repeat off → all → one
-     Shift + ← / →  previous / next song
+     Shift + ← / →  previous / next song   L          lyrics view
+                                           E          equalizer
    Plain arrows are deliberately NOT used for volume: they scroll the
    library list, and the app already reserved Shift+Arrow for track skip.
    --------------------------------------------------------------------- */
@@ -3436,6 +3474,8 @@ window.addEventListener("keydown", (e) => {
   const k = key.toLowerCase();
   if (k === "m") { e.preventDefault(); volume.toggleMute(); toast(volumeToast(), 1100); }
   else if (k === "s") { e.preventDefault(); toggleShuffle(); toast(state.shuffle ? "🔀 Shuffle on" : "Shuffle off", 1100); }
+  else if (k === "l") { e.preventDefault(); openLyrics(); }
+  else if (k === "e") { e.preventDefault(); openEq(); }
   else if (k === "r") { e.preventDefault(); cycleRepeat(); toast(state.repeat === "one" ? "🔂 Repeat one" : state.repeat === "all" ? "🔁 Repeat all" : "Repeat off", 1100); }
 });
 
@@ -3458,6 +3498,33 @@ window.addEventListener("resize", () => {
   const mobile = window.innerWidth < 900;
   const appLoaded = els.appBody && !els.appBody.classList.contains("hidden");
   els.tabbar.classList.toggle("hidden", !mobile || !appLoaded);
+});
+
+/* ---------------------------------------------------------------------
+   Equalizer + Lyrics bridge — the two modules are separate files and this
+   file is a closure, so hand them exactly what they need and nothing more.
+   --------------------------------------------------------------------- */
+function currentSong() { return state.songs.find(s => s.id === state.queue[state.queueIndex]) || null; }
+async function getLyricFileForSong(songId) {
+  const song = state.songs.find(s => s.id === songId);
+  if (!song || !song.relPath) return null;
+  const ref = state.lyricRefs.get(lyricKey(song.relPath));
+  if (!ref) return null;
+  return ref.getFile ? await ref.getFile() : ref;
+}
+window.VaneEQ.attach(audio).then(() => {
+  window.VaneEQ.subscribe((snap) => {
+    els.eqBtn.classList.toggle("active", snap.engaged);
+    els.eqBtn.title = snap.engaged ? "Equalizer — on (E)" : "Equalizer (E)";
+  });
+});
+window.VaneLyrics.init({
+  audio, toast,
+  getSong: currentSong,
+  getFile: getFileForSong,
+  getLyricFile: getLyricFileForSong,
+  art: (song) => resolveArtUrl(song),
+  togglePlay, next: () => nextSong(false), prev: prevSong,
 });
 
 /* ---------------------------------------------------------------------

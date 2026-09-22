@@ -115,6 +115,17 @@ const els = {
   kbBtn: $("#kbBtn"), kbModalOverlay: $("#kbModalOverlay"), kbCloseBtn: $("#kbCloseBtn"),
 };
 
+/* Equalizer — same panel and saved settings as the music player. "lazy" = the video element is only
+   routed through Web Audio once the EQ is actually engaged (from a tap), so people who never touch it
+   get the browser's untouched native playback. */
+if (window.VaneEQ && els.video) {
+  const eqBtn = $("#eqBtn");
+  window.VaneEQ.attach(els.video, { lazy: true }).then(() => {
+    window.VaneEQ.subscribe((snap) => { eqBtn.classList.toggle("eq-on", snap.engaged); eqBtn.title = snap.engaged ? "Equalizer — on" : "Equalizer"; });
+  });
+  eqBtn.addEventListener("click", () => window.VaneEQ.toggle(eqBtn));
+}
+
 function toast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => els.toast.classList.remove("show"), 2400); }
 function fmtTime(sec) { if (!isFinite(sec) || sec < 0) sec = 0; const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
 function escapeHtml(str) { return String(str).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }

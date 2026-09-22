@@ -1709,6 +1709,8 @@ const SHORTCUTS = {
     { keys: ["Shift", "→"],     label: "Next song" },
     { keys: ["S"],              label: "Shuffle on / off" },
     { keys: ["R"],              label: "Repeat: off → all → one" },
+    { keys: ["L"],              label: "Open / close lyrics" },
+    { keys: ["E"],              label: "Open / close equalizer" },
   ],
   video: [
     { keys: ["Space"],          label: "Play / Pause" },
