@@ -1204,6 +1204,7 @@ html.rage-active #heartTitleCanvas { display: block; }
   display: flex; align-items: center; justify-content: center; cursor: grab;
 }
 .tc-track:active { cursor: grabbing; }
+#vqCanvas.vv-cursor-grab { cursor: grab; }
 .tc-card {
   position: absolute; width: 128px; height: 178px; border-radius: 16px; padding: 12px;
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px;

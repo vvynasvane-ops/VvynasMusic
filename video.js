@@ -691,6 +691,10 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.shiftKey || e.repeat) return;
+  // Arrow keys already back off while the Shortcuts panel is open (above);
+  // the letter shortcuts need the same guard so "f"/"v"/"m"/"e" can't fire
+  // on the player underneath while that panel is the thing on screen.
+  if (els.kbModalOverlay.classList.contains("open")) return;
   const k = key.toLowerCase();
   if (k === "m") { e.preventDefault(); volume.toggleMute(); showVolumeOsd(); }
   else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
@@ -740,6 +744,7 @@ async function boot() {
       if (ok) { state.usingFSApi = true; await scanHandle(handle); }
       else toast("Access wasn't granted.");
     };
+    window.VV.watchForSilentReconnect(handle, async () => { state.usingFSApi = true; await scanHandle(handle); });
   }
 }
 boot();

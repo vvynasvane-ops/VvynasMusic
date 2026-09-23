@@ -929,6 +929,14 @@ function showResumePrompt(handle) {
       toast("Access wasn't granted.");
     }
   };
+  // Safety net: if the browser silently re-grants the same folder later
+  // (tab refocus, bfcache restore) reconnect automatically — no need to
+  // sit on an unclicked "Resume Access" button.
+  window.VV.watchForSilentReconnect(handle, async () => {
+    showConnecting("Welcome back…", "Resuming access to your saved folder.");
+    state.usingFSApi = true;
+    await scanDirectoryHandle(handle);
+  });
 }
 
 /* Recursively walk a FileSystemDirectoryHandle */
@@ -2485,6 +2493,7 @@ function applySettingsToUI() {
   applyOverlayStrength();
   applySongListOverlay();
   RageMode.setActive(state.settings.rageMode);
+  renderCursorGrid();
   renderFontGrid();
   renderThemeGrid();
   renderArtStyleGrid();
@@ -2655,6 +2664,24 @@ function applyAccentColors() {
   if (els.accentColorInput) { els.accentColorInput.value = a; els.accentColorHex.textContent = a.toUpperCase(); }
   if (els.accent2ColorInput) { els.accent2ColorInput.value = a2; els.accent2ColorHex.textContent = a2.toUpperCase(); }
 }
+
+function renderCursorGrid() {
+  const grid = document.getElementById("cursorGrid");
+  if (!grid) return;
+  const current = document.documentElement.getAttribute("data-cursor") || "arrow";
+  const glyphs = { arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶" };
+  grid.innerHTML = window.VV.CURSOR_OPTIONS.map(c => `
+    <div class="art-style-option ${current === c.id ? "active" : ""}" data-cursor-id="${c.id}" title="${c.hint}">
+      <span style="font-size:19px;line-height:1;">${glyphs[c.id] || "➤"}</span>
+      <div class="lbl">${c.label}</div>
+    </div>`).join("");
+}
+document.getElementById("cursorGrid").addEventListener("click", async (e) => {
+  const opt = e.target.closest("[data-cursor-id]");
+  if (!opt) return;
+  await window.VV.setCursorStyle(opt.dataset.cursorId);
+  renderCursorGrid();
+});
 
 function renderFontGrid() {
   const grid = document.getElementById("fontGrid");
@@ -2877,7 +2904,7 @@ function applySongListOverlay() {
     els.songListOverlayInput.value = String(v);
   }
 }
-function openSettings() { els.settingsModalOverlay.classList.add("open"); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
+function openSettings() { els.settingsModalOverlay.classList.add("open"); renderCursorGrid(); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
 function closeSettings() { els.settingsModalOverlay.classList.remove("open"); }
 
 /* ---------------------------------------------------------------------
@@ -3501,6 +3528,13 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.shiftKey || e.repeat) return;
+  // The letter shortcuts act on the player/library underneath, so they
+  // must not leak through while a modal or sheet sits on top of it —
+  // pressing "s" to type inside the New Playlist naming field shouldn't
+  // also toggle Shuffle behind the dialog. Space is deliberately exempt
+  // (handled above, before this guard) — see its own comment for why.
+  const blockingOverlays = [els.newPlaylistModalOverlay, els.playlistModalOverlay, els.rowActionsSheet, els.queueSheet, els.settingsModalOverlay];
+  if (blockingOverlays.some(el => el && el.classList.contains("open"))) return;
   const k = key.toLowerCase();
   if (k === "m") { e.preventDefault(); volume.toggleMute(); toast(volumeToast(), 1100); }
   else if (k === "s") { e.preventDefault(); toggleShuffle(); toast(state.shuffle ? "🔀 Shuffle on" : "Shuffle off", 1100); }

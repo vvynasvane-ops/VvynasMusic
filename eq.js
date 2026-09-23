@@ -670,7 +670,7 @@ function bindCanvas() {
   c.addEventListener("pointermove", (e) => {
     const r = c.getBoundingClientRect();
     if (UI.drag >= 0) { let db = dbOfY(e.clientY - r.top, r.height); if (Math.abs(db) < 0.6) db = 0; api.setBand(UI.drag, db); }
-    else c.style.cursor = pick(e) >= 0 ? "grab" : "default";
+    else c.classList.toggle("vv-cursor-grab", pick(e) >= 0);
   });
   const end = (e) => { UI.drag = -1; try { c.releasePointerCapture(e.pointerId); } catch (err) {} };
   c.addEventListener("pointerup", end); c.addEventListener("pointercancel", end);

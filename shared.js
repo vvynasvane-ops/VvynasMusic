@@ -1784,6 +1784,207 @@ function renderShortcutList(container, env, noteEl) {
 }
 
 /* ---------------------------------------------------------------------
+   Custom cursors — Westeros-themed pointers. Stored under kv/"cursorStyle"
+   (shared across the whole IndexedDB, same as dirHandle/settings) so a
+   choice made in the library's Settings modal is already active the
+   instant you land on the video room, the DJ booth, a playlist, a
+   folder, or even About/Privacy/Terms — no per-page setup needed.
+   --------------------------------------------------------------------- */
+const CURSOR_OPTIONS = [
+  { id: "arrow",  label: "Arrow",          hint: "The default pointer" },
+  { id: "sword",  label: "Valyrian Steel", hint: "A longsword tip" },
+  { id: "dragon", label: "Dragonclaw",     hint: "A wing & claw" },
+  { id: "quill",  label: "Raven's Quill",  hint: "A raven feather" },
+];
+function _cursorSvgMarkup(id) {
+  switch (id) {
+    case "sword": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+      <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#EDE3C8' stroke='#C9A84C' stroke-width='1.3'/>
+      <path d='M9 19 L27 19' stroke='#8A6E2A' stroke-width='2.6' stroke-linecap='round'/>
+      <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#5C4A1E'/>
+      <circle cx='18' cy='33.4' r='2.1' fill='#C9A84C' stroke='#5C4A1E' stroke-width='0.8'/>
+    </svg>`;
+    case "dragon": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+      <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+        fill='#141414' stroke='#B22222' stroke-width='1.2'/>
+      <path d='M20.5 8.5 L18.5 3' stroke='#B22222' stroke-width='1.5' stroke-linecap='round'/>
+      <path d='M23.5 6.5 L22.5 1.7' stroke='#B22222' stroke-width='1.3' stroke-linecap='round'/>
+      <circle cx='25' cy='11' r='1.15' fill='#C9A84C'/>
+    </svg>`;
+    case "quill": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+      <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#8B9CA8' stroke-width='1'/>
+      <path d='M30 2 C24 8 16 16 8 28' stroke='#C9A84C' stroke-width='0.8' fill='none' opacity='0.65'/>
+      <path d='M4 34 L8 32 L9 33.4 Z' fill='#5C4A1E'/>
+    </svg>`;
+    default: return null; // "arrow" — resets to the normal system pointer
+  }
+}
+function _cursorCssValue(id) {
+  const svg = _cursorSvgMarkup(id);
+  if (!svg) return "auto";
+  const url = `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, " ").trim())}")`;
+  const hotspot = id === "quill" ? "4 32" : id === "sword" ? "6 3" : "4 4";
+  return `${url} ${hotspot}, auto`;
+}
+let _cursorStyleTag = null;
+function _ensureCursorStyleTag() {
+  if (_cursorStyleTag && document.head.contains(_cursorStyleTag)) return _cursorStyleTag;
+  _cursorStyleTag = document.getElementById("vv-cursor-style") || document.createElement("style");
+  _cursorStyleTag.id = "vv-cursor-style";
+  // A themed cursor takes over everywhere via inheritance — but text
+  // fields keep the normal text-beam, or typing would feel broken.
+  _cursorStyleTag.textContent = `
+    html[data-cursor]:not([data-cursor="arrow"]) * { cursor: var(--vv-cursor), auto !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) input,
+    html[data-cursor]:not([data-cursor="arrow"]) textarea,
+    html[data-cursor]:not([data-cursor="arrow"]) [contenteditable="true"] { cursor: text !important; }
+    /* A themed pointer is decorative — it must never swallow a cursor that
+       is actually communicating something (draggable, disabled, precision
+       picking). Each selector repeats the html[data-cursor] prefix only to
+       out-specificity the blanket rule above; it changes nothing else. */
+    html[data-cursor]:not([data-cursor="arrow"]) .tc-track,
+    html[data-cursor]:not([data-cursor="arrow"]) .dj-scrolltop,
+    html[data-cursor]:not([data-cursor="arrow"]) .dj-mini-scrolltop,
+    html[data-cursor]:not([data-cursor="arrow"]) #vqCanvas.vv-cursor-grab { cursor: grab !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) .tc-track:active,
+    html[data-cursor]:not([data-cursor="arrow"]) .dj-scrolltop:active,
+    html[data-cursor]:not([data-cursor="arrow"]) .dj-mini-scrolltop:active { cursor: grabbing !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) button:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) [aria-disabled="true"] { cursor: not-allowed !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) .lyrics-overlay.picking .ly-line { cursor: crosshair !important; }
+  `;
+  if (!_cursorStyleTag.isConnected) document.head.appendChild(_cursorStyleTag);
+  return _cursorStyleTag;
+}
+function applyCursor(id) {
+  const opt = CURSOR_OPTIONS.find(c => c.id === id) || CURSOR_OPTIONS[0];
+  _ensureCursorStyleTag();
+  document.documentElement.setAttribute("data-cursor", opt.id);
+  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(opt.id));
+  return opt.id;
+}
+async function getCursorStyle() { return (await idbGet("kv", "cursorStyle")) || "arrow"; }
+async function setCursorStyle(id) { await idbSet("kv", "cursorStyle", id); return applyCursor(id); }
+async function initSharedCursor() { applyCursor(await getCursorStyle()); }
+
+/* ---------------------------------------------------------------------
+   Scroll-to-top — a gold Westeros-badge FAB with a rising arrow, on every
+   scrollable page/view (library, playlists, folders, folder & playlist
+   detail, video room, recap, About/Privacy/Terms). Self-contained: styles
+   + markup are injected here so no page-specific CSS is required.
+   dj.html mounts its own ring-progress version (#scrollTopBtn) — this one
+   backs off there so the two never stack in the same corner.
+   --------------------------------------------------------------------- */
+function _ensureScrollTopStyleTag() {
+  if (document.getElementById("vv-scrolltop-style")) return;
+  const s = document.createElement("style");
+  s.id = "vv-scrolltop-style";
+  s.textContent = `
+    .vv-scrolltop-fab {
+      position: fixed; right: 14px; bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+      width: 50px; height: 50px; padding: 0; border: 1px solid rgba(201,168,76,0.45);
+      border-radius: 50%; background: radial-gradient(circle at 35% 28%, rgba(40,32,18,.92), rgba(8,8,8,.92) 72%);
+      backdrop-filter: blur(4px); cursor: pointer; z-index: 55; display: grid; place-items: center;
+      opacity: 0; transform: translateY(10px) scale(0.9); pointer-events: none;
+      transition: opacity .25s ease, transform .25s ease, border-color .2s ease, box-shadow .2s ease;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+    }
+    .vv-scrolltop-fab.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+    .vv-scrolltop-fab:hover { border-color: #C9A84C; box-shadow: 0 4px 18px rgba(0,0,0,.5), 0 0 14px rgba(201,168,76,.35); }
+    .vv-scrolltop-fab:active { transform: scale(.92); }
+    .vv-scrolltop-fab svg { width: 22px; height: 22px; overflow: visible; }
+    .vv-scrolltop-arrow { animation: vv-arrow-bob 2.4s ease-in-out infinite; transform-origin: 50% 65%; }
+    .vv-scrolltop-fab.launch .vv-scrolltop-arrow { animation: vv-arrow-launch .5s cubic-bezier(.3,.9,.4,1); }
+    @keyframes vv-arrow-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+    /* A single quick ascent-and-reset on click, standing in for the old
+       haul: the arrow darts up and fades, then resets low and fades back
+       in — read as "gone, then here again at the top". */
+    @keyframes vv-arrow-launch {
+      0%   { transform: translateY(0);   opacity: 1; }
+      42%  { transform: translateY(-8px); opacity: 0; }
+      43%  { transform: translateY(7px);  opacity: 0; }
+      100% { transform: translateY(0);   opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .vv-scrolltop-arrow, .vv-scrolltop-fab.launch .vv-scrolltop-arrow { animation: none !important; }
+    }
+  `;
+  document.head.appendChild(s);
+}
+function _scrollTopMarkup() {
+  return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#E8C468" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path class="vv-scrolltop-arrow" d="M12 20.5V5.5M7 10l5-5 5 5"/>
+  </svg>`;
+}
+function _scrollTopTargets() {
+  const targets = [document.scrollingElement || document.documentElement];
+  document.querySelectorAll(".content-scroll, .modal.open, .dj-modal.open").forEach(el => { if (!targets.includes(el)) targets.push(el); });
+  return targets;
+}
+function initScrollTopWidget() {
+  if (document.getElementById("vvScrollTop")) return;
+  if (document.getElementById("scrollTopBtn")) return; // dj.html has its own
+  _ensureScrollTopStyleTag();
+  const btn = document.createElement("button");
+  btn.id = "vvScrollTop";
+  btn.type = "button";
+  btn.className = "vv-scrolltop-fab";
+  btn.title = "Back to the top";
+  btn.setAttribute("aria-label", "Scroll to top");
+  btn.innerHTML = _scrollTopMarkup();
+  document.body.appendChild(btn);
+  const update = () => {
+    const modalOpen = document.querySelector('[class*="overlay"].open, [class*="Overlay"].open');
+    btn.classList.toggle("show", !modalOpen && _scrollTopTargets().some(el => el.scrollTop > 240));
+  };
+  window.addEventListener("scroll", update, { passive: true });
+  document.addEventListener("scroll", (e) => { if (e.target && e.target.nodeType === 1) update(); }, { passive: true, capture: true });
+  // Re-check whenever a modal/sheet opens or closes, so the FAB never
+  // floats over a dialog — scrolling alone wouldn't catch that.
+  if (window.MutationObserver) {
+    new MutationObserver(update).observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+  }
+  btn.addEventListener("click", () => {
+    btn.classList.add("launch");
+    _scrollTopTargets().forEach(el => el.scrollTo({ top: 0, behavior: "smooth" }));
+    setTimeout(() => btn.classList.remove("launch"), 550);
+  });
+  update();
+}
+
+/* ---------------------------------------------------------------------
+   Silent folder reconnect — a no-extra-click safety net on top of each
+   page's normal "Resume Access" flow. The File System Access API can
+   require a fresh user gesture to re-grant permission after a hard
+   navigation; this just means that as soon as the browser silently
+   reports the handle as granted again (tab refocus, bfcache restore,
+   permission re-evaluated), the caller is notified immediately instead
+   of leaving a stale "Resume Access" button sitting there.
+   --------------------------------------------------------------------- */
+function watchForSilentReconnect(handle, onReconnected) {
+  if (!handle || typeof onReconnected !== "function") return () => {};
+  let done = false;
+  const tryOnce = async () => {
+    if (done) return;
+    try {
+      if (await verifyPermission(handle, false)) { done = true; cleanup(); onReconnected(); }
+    } catch (_) { /* ignore — next trigger will retry */ }
+  };
+  const cleanup = () => {
+    document.removeEventListener("visibilitychange", tryOnce);
+    window.removeEventListener("focus", tryOnce);
+    window.removeEventListener("pageshow", tryOnce);
+  };
+  document.addEventListener("visibilitychange", tryOnce);
+  window.addEventListener("focus", tryOnce);
+  window.addEventListener("pageshow", tryOnce);
+  return cleanup;
+}
+
+if (document.body) { initSharedCursor(); initScrollTopWidget(); }
+else document.addEventListener("DOMContentLoaded", () => { initSharedCursor(); initScrollTopWidget(); });
+
+/* ---------------------------------------------------------------------
    Public export
    --------------------------------------------------------------------- */
 global.VV = {
@@ -1797,6 +1998,8 @@ global.VV = {
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
   resizeImageFileToDataUrl, extractRawPictureBlob, getEmbeddedArtForFile,
   createVolumeController, volumeIconMarkup, SHORTCUTS, renderShortcutList,
+  CURSOR_OPTIONS, applyCursor, getCursorStyle, setCursorStyle, initSharedCursor,
+  initScrollTopWidget, watchForSilentReconnect,
 };
 
 })(window);
