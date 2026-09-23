@@ -2669,7 +2669,12 @@ function renderCursorGrid() {
   const grid = document.getElementById("cursorGrid");
   if (!grid) return;
   const current = document.documentElement.getAttribute("data-cursor") || "arrow";
-  const glyphs = { arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶" };
+  const glyphs = {
+    arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶",
+    potion: "🧪", needle: "💉", ironfist: "🤜", nighthawk: "🦅",
+    crow: "🐦‍⬛", butterfly: "🦋", spaceship: "🚀", pen: "🖋",
+    rifle: "🔫", snake: "🐍", okhand: "👌", flip: "🖕", luck: "🤞",
+  };
   grid.innerHTML = window.VV.CURSOR_OPTIONS.map(c => `
     <div class="art-style-option ${current === c.id ? "active" : ""}" data-cursor-id="${c.id}" title="${c.hint}">
       <span style="font-size:19px;line-height:1;">${glyphs[c.id] || "➤"}</span>
