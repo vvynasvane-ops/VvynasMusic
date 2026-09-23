@@ -189,14 +189,27 @@ function ensureAudioContext() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   masterGain = audioCtx.createGain();
   masterGain.gain.value = 1;
-  masterGain.connect(audioCtx.destination);
+  // The equalizer sits between the crossfaded mix and the speakers, so it
+  // shapes whatever's actually playing regardless of which deck (or both)
+  // is live — same shared settings as the music/video player. Wired
+  // eagerly (not lazily): unlike those pages, DJ mode already routes both
+  // decks through this context from the moment a deck loads, so the
+  // signal has nowhere else to go until this connects it through.
+  if (window.VaneEQ) {
+    window.VaneEQ.attachToNode(audioCtx, masterGain, audioCtx.destination, {
+      isPlaying: () => state.deckA.playing || state.deckB.playing,
+    });
+    window.VaneEQ.ensureGraph();
+  } else {
+    masterGain.connect(audioCtx.destination);
+  }
   return audioCtx;
 }
 
 const $ = (s) => document.querySelector(s);
 const els = {
   grant: $("#djGrant"), grantBtn: $("#djGrantBtn"), app: $("#djApp"), status: $("#djStatus"),
-  visualBtn: $("#djVisualBtn"), settingsBtn: $("#djSettingsBtn"),
+  visualBtn: $("#djVisualBtn"), settingsBtn: $("#djSettingsBtn"), eqBtn: $("#djEqBtn"),
   deckAArt: $("#deckAArt"), deckATitle: $("#deckATitle"), deckAArtist: $("#deckAArtist"), deckACount: $("#deckACount"),
   deckAPitch: $("#deckAPitch"), deckASelect: $("#deckASelect"), deckAPlay: $("#deckAPlay"), deckACue: $("#deckACue"),
   deckBArt: $("#deckBArt"), deckBTitle: $("#deckBTitle"), deckBArtist: $("#deckBArtist"), deckBCount: $("#deckBCount"),
@@ -682,6 +695,36 @@ function cycleVisualTheme() {
   els.visualThemeName.textContent = THEMES[next].name;
 }
 els.visualBtn.addEventListener("click", cycleVisualTheme);
+
+/* ---------------------------------------------------------------------
+   Equalizer — same shared panel and saved settings as the music/video
+   player, inserted after the crossfader (see ensureAudioContext above).
+   --------------------------------------------------------------------- */
+if (window.VaneEQ && els.eqBtn) {
+  window.VaneEQ.subscribe((snap) => {
+    els.eqBtn.classList.toggle("eq-on", snap.engaged);
+    els.eqBtn.title = (snap.engaged ? "Equalizer — on (E)" : "Equalizer (E)");
+  });
+  els.eqBtn.addEventListener("click", () => window.VaneEQ.toggle(els.eqBtn));
+}
+
+/* "E" for the equalizer — same key as the music/video player, off while
+   typing or with a modal/sheet already open on top of the booth. */
+function isTypingTarget(t) {
+  if (!(t instanceof window.Element)) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file"].includes((t.type || "").toLowerCase());
+}
+window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.shiftKey || e.repeat) return;
+  if (isTypingTarget(e.target)) return;
+  if (e.key.toLowerCase() !== "e") return;
+  const blockingOverlays = [els.pickerOverlay, els.settingsOverlay, els.aboutOverlay];
+  if (blockingOverlays.some(el => el && el.classList.contains("open"))) return;
+  e.preventDefault();
+  window.VaneEQ && window.VaneEQ.toggle(els.eqBtn);
+});
 
 /* ---------------------------------------------------------------------
    DJ Settings modal

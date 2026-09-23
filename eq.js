@@ -208,10 +208,18 @@ function headroomDb(s) {
 /* ---------------------------------------------------------------------
    Engine — the shared audio graph
    --------------------------------------------------------------------- */
-const E = { media: null, lazy: false, g: null, failed: false, armed: false, wetConnected: false, wetTimer: null, reverbOn: false, irCache: {} };
+const E = { media: null, lazy: false, g: null, failed: false, armed: false, wetConnected: false, wetTimer: null, reverbOn: false, irCache: {}, nodeMode: false, extCtx: null, extInput: null, extOutput: null, isPlayingFn: null };
 let st = defaultState();
 const listeners = [];
 function notify() { const snap = api.snapshot(); listeners.forEach(fn => { try { fn(snap); } catch (e) { /* a UI listener must never break audio */ } }); }
+/** Is there audio actually flowing right now? A single <media> element
+ *  answers this itself (.paused); DJ mode's dual-deck mix has no one
+ *  element to ask, so it hands us a callback instead (see attachToNode). */
+function sourcePlaying() {
+  if (E.media) return !E.media.paused;
+  if (E.isPlayingFn) return !!E.isPlayingFn();
+  return false;
+}
 
 function makeImpulse(ctx, key) {
   const cfg = REVERB_SIZES[key] || REVERB_SIZES.hall;
@@ -229,17 +237,13 @@ function makeImpulse(ctx, key) {
   return buf;
 }
 
-function buildGraph(media) {
-  const AC = global.AudioContext || global.webkitAudioContext;
-  if (!AC) throw new Error("Web Audio not supported");
-  let ctx; try { ctx = new AC({ latencyHint: "playback" }); } catch (e) { ctx = new AC(); }
-  const src = ctx.createMediaElementSource(media);
+function buildAudioGraph(ctx, srcNode, destNode) {
   const G = () => ctx.createGain();
 
   // Force a clean stereo image (mono → dual-mono, 5.1 → stereo) once, up front.
   const inTrim = G(); inTrim.channelCount = 2; inTrim.channelCountMode = "explicit"; inTrim.channelInterpretation = "speakers";
   const dry = G(), wet = G(), master = G(), pre = G();
-  src.connect(inTrim); inTrim.connect(dry); dry.connect(master);
+  srcNode.connect(inTrim); inTrim.connect(dry); dry.connect(master);
   wet.gain.value = 0;
   wet.connect(pre);
 
@@ -272,9 +276,20 @@ function buildGraph(media) {
   // Analysers: a small/fast one for beat detection (same settings Rage Mode always used) and a fine one for the EQ display
   const beat = ctx.createAnalyser(); beat.fftSize = 256; beat.smoothingTimeConstant = 0.75;
   const spectrum = ctx.createAnalyser(); spectrum.fftSize = 4096; spectrum.smoothingTimeConstant = 0.82;
-  master.connect(ctx.destination); master.connect(beat); master.connect(spectrum);
+  master.connect(destNode); master.connect(beat); master.connect(spectrum);
 
-  const g = { ctx, src, inTrim, dry, wet, pre, tone, bands, midSide: { side }, balL, balR, stageOut, send, conv, reverbRet, comp, makeup, master, beat, spectrum };
+  return { ctx, src: srcNode, inTrim, dry, wet, pre, tone, bands, midSide: { side }, balL, balR, stageOut, send, conv, reverbRet, comp, makeup, master, beat, spectrum };
+}
+
+/** A single <media> element source — the music/video player's normal case.
+ *  Owns its own AudioContext, since it's the only thing on the page that
+ *  needs one. */
+function buildGraph(media) {
+  const AC = global.AudioContext || global.webkitAudioContext;
+  if (!AC) throw new Error("Web Audio not supported");
+  let ctx; try { ctx = new AC({ latencyHint: "playback" }); } catch (e) { ctx = new AC(); }
+  const src = ctx.createMediaElementSource(media);
+  const g = buildAudioGraph(ctx, src, ctx.destination);
 
   // Autoplay/backgrounding can leave the context suspended — and a suspended
   // context means SILENCE once the element is routed through it. Keep it awake.
@@ -287,11 +302,33 @@ function buildGraph(media) {
   return g;
 }
 
+/** An existing node in a graph the page already built (DJ mode's two decks
+ *  summed into one gain node ahead of the speakers) — the EQ is inserted
+ *  between srcNode and destNode rather than owning the AudioContext or
+ *  tapping a <media> element itself. */
+function buildGraphFromNode(ctx, srcNode, destNode) {
+  const g = buildAudioGraph(ctx, srcNode, destNode);
+  const wake = () => { if (ctx.state === "suspended" || ctx.state === "interrupted") ctx.resume().catch(() => {}); };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) wake(); });
+  document.addEventListener("pointerdown", wake, { passive: true });
+  wake();
+  return g;
+}
+
 /** Build (once) and return the shared graph, or null if this browser can't. */
 function ensureGraph(media) {
   if (E.g) { const c = E.g.ctx; if (c.state === "suspended" || c.state === "interrupted") c.resume().catch(() => {}); return E.g; }
+  if (E.failed) return null;
+  if (E.nodeMode) {
+    try { E.g = buildGraphFromNode(E.extCtx, E.extInput, E.extOutput); } catch (err) {
+      console.warn("Equalizer: couldn't build the audio graph — playback continues untouched.", err);
+      E.failed = true; return null;
+    }
+    applyAudio();
+    return E.g;
+  }
   media = media || E.media;
-  if (!media || E.failed) return null;
+  if (!media) return null;
   try { E.g = buildGraph(media); } catch (err) {
     console.warn("Equalizer: couldn't build the audio graph — playback continues untouched.", err);
     E.failed = true; return null;
@@ -380,6 +417,19 @@ const api = {
   /** Wire this page's media element. lazy = don't touch the element until the EQ is actually used (video page). */
   attach(media, opts) {
     E.media = media; E.lazy = !!(opts && opts.lazy);
+    if (opts && opts.toast) E.toast = opts.toast;
+    return api.load();
+  },
+  /** Wire an existing Web Audio node graph instead of a single <media>
+   *  element — for pages that already own an AudioContext (DJ mode's two
+   *  decks summed into one gain node ahead of the speakers). The EQ chain
+   *  is inserted between inputNode and outputTarget.
+   *  opts.isPlaying: () => bool — since there's no one element to check
+   *  .paused on, this drives the live-spectrum display instead. */
+  attachToNode(ctx, inputNode, outputTarget, opts) {
+    E.nodeMode = true; E.extCtx = ctx; E.extInput = inputNode; E.extOutput = outputTarget;
+    E.lazy = !!(opts && opts.lazy);
+    E.isPlayingFn = (opts && opts.isPlaying) || null;
     if (opts && opts.toast) E.toast = opts.toast;
     return api.load();
   },
@@ -698,7 +748,7 @@ function drawFrame() {
   x.globalAlpha = 1;
 
   // live spectrum (post-EQ, i.e. what you hear)
-  const g = E.g, playing = g && E.media && !E.media.paused && g.ctx.state === "running";
+  const g = E.g, playing = g && sourcePlaying() && g.ctx.state === "running";
   if (!UI.spec || !g) UI.spec = new Float32Array(160);
   if (g) {
     if (!UI.specBuf) UI.specBuf = new Uint8Array(g.spectrum.frequencyBinCount);
@@ -854,7 +904,7 @@ function open(opener) {
   UI.root.classList.add("open");
   uiSync();
   hideUndo();
-  UI.el.hint.textContent = E.g && E.media && !E.media.paused ? "Live spectrum — drag the dots or use the sliders"
+  UI.el.hint.textContent = E.g && sourcePlaying() ? "Live spectrum — drag the dots or use the sliders"
     : E.lazy && !E.g ? "Drag the dots — or use the sliders below" : "Play something to see the live spectrum";
   if (!UI.raf) UI.raf = requestAnimationFrame(loop);
   setTimeout(() => { const c = UI.root.querySelector("#vqClose"); c && c.focus(); }, 30);

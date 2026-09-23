@@ -1789,6 +1789,12 @@ function renderShortcutList(container, env, noteEl) {
    choice made in the library's Settings modal is already active the
    instant you land on the video room, the DJ booth, a playlist, a
    folder, or even About/Privacy/Terms — no per-page setup needed.
+
+   Each theme has three drawings, not one: idle (resting), hover (over
+   anything clickable) and press (while it's actually being pressed) — so
+   the cursor visibly reacts instead of sitting as one static glyph. Which
+   drawing is showing lives entirely in the single --vv-cursor custom
+   property on <html>; swapping it is all _setCursorState ever does.
    --------------------------------------------------------------------- */
 const CURSOR_OPTIONS = [
   { id: "arrow",  label: "Arrow",          hint: "The default pointer" },
@@ -1796,76 +1802,183 @@ const CURSOR_OPTIONS = [
   { id: "dragon", label: "Dragonclaw",     hint: "A wing & claw" },
   { id: "quill",  label: "Raven's Quill",  hint: "A raven feather" },
 ];
-function _cursorSvgMarkup(id) {
+function _cursorSvgMarkup(id, state) {
+  state = state || "idle";
   switch (id) {
-    case "sword": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
-      <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#EDE3C8' stroke='#C9A84C' stroke-width='1.3'/>
-      <path d='M9 19 L27 19' stroke='#8A6E2A' stroke-width='2.6' stroke-linecap='round'/>
-      <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#5C4A1E'/>
-      <circle cx='18' cy='33.4' r='2.1' fill='#C9A84C' stroke='#5C4A1E' stroke-width='0.8'/>
-    </svg>`;
-    case "dragon": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
-      <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
-        fill='#141414' stroke='#B22222' stroke-width='1.2'/>
-      <path d='M20.5 8.5 L18.5 3' stroke='#B22222' stroke-width='1.5' stroke-linecap='round'/>
-      <path d='M23.5 6.5 L22.5 1.7' stroke='#B22222' stroke-width='1.3' stroke-linecap='round'/>
-      <circle cx='25' cy='11' r='1.15' fill='#C9A84C'/>
-    </svg>`;
-    case "quill": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
-      <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#8B9CA8' stroke-width='1'/>
-      <path d='M30 2 C24 8 16 16 8 28' stroke='#C9A84C' stroke-width='0.8' fill='none' opacity='0.65'/>
-      <path d='M4 34 L8 32 L9 33.4 Z' fill='#5C4A1E'/>
-    </svg>`;
+    case "sword": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#F5ECCF' stroke='#E8C468' stroke-width='1.6'/>
+        <path d='M15.4 8 L17 15' stroke='#FFFFFF' stroke-width='1' stroke-linecap='round' opacity='0.85'/>
+        <path d='M9 19 L27 19' stroke='#C9A84C' stroke-width='2.8' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#6B5726'/>
+        <circle cx='18' cy='33.4' r='2.3' fill='#E8C468' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <circle cx='18' cy='4.2' r='3.4' fill='#FFF3C9' opacity='0.55'/>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#FFF6DE' stroke='#F0D27A' stroke-width='1.8'/>
+        <path d='M9 19 L27 19' stroke='#E8C468' stroke-width='3' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#7A6530'/>
+        <circle cx='18' cy='33.4' r='2.4' fill='#F5D98A' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#EDE3C8' stroke='#C9A84C' stroke-width='1.3'/>
+        <path d='M9 19 L27 19' stroke='#8A6E2A' stroke-width='2.6' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#5C4A1E'/>
+        <circle cx='18' cy='33.4' r='2.1' fill='#C9A84C' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+    }
+    case "dragon": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#181818' stroke='#E8462B' stroke-width='1.4'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#E8462B' stroke-width='1.6' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#E8462B' stroke-width='1.4' stroke-linecap='round'/>
+        <circle cx='32.5' cy='4' r='1.6' fill='#FF7A29'/>
+        <circle cx='25' cy='11' r='1.15' fill='#E8C468'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#1c1c1c' stroke='#FF7A29' stroke-width='1.6'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#FF7A29' stroke-width='1.7' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#FF7A29' stroke-width='1.5' stroke-linecap='round'/>
+        <circle cx='32' cy='4' r='3.4' fill='#FF9A45' opacity='0.55'/>
+        <circle cx='32.5' cy='4' r='1.8' fill='#FFD24A'/>
+        <circle cx='25' cy='11' r='1.25' fill='#FFD24A'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#141414' stroke='#B22222' stroke-width='1.2'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#B22222' stroke-width='1.5' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#B22222' stroke-width='1.3' stroke-linecap='round'/>
+        <circle cx='25' cy='11' r='1.15' fill='#C9A84C'/>
+      </svg>`;
+    }
+    case "quill": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#C9A84C' stroke-width='1.1'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#E8C468' stroke-width='0.9' fill='none' opacity='0.75'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#6B5726'/>
+        <circle cx='5.4' cy='33.1' r='1.3' fill='#2A3A8C' opacity='0.85'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#1c1c1c' stroke='#E8C468' stroke-width='1.2'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#F5D98A' stroke-width='1' fill='none' opacity='0.85'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#7A6530'/>
+        <circle cx='5.2' cy='33.4' r='1.4' fill='#3546A8'/>
+        <path d='M4 34.4 L2.4 35.9' stroke='#3546A8' stroke-width='1.4' stroke-linecap='round'/>
+        <circle cx='2' cy='36' r='0.9' fill='#3546A8'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#8B9CA8' stroke-width='1'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#C9A84C' stroke-width='0.8' fill='none' opacity='0.65'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#5C4A1E'/>
+      </svg>`;
+    }
     default: return null; // "arrow" — resets to the normal system pointer
   }
 }
-function _cursorCssValue(id) {
-  const svg = _cursorSvgMarkup(id);
-  if (!svg) return "auto";
-  const url = `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, " ").trim())}")`;
-  const hotspot = id === "quill" ? "4 32" : id === "sword" ? "6 3" : "4 4";
-  return `${url} ${hotspot}, auto`;
+function _cursorHotspot(id) {
+  return id === "quill" ? "4 32" : id === "sword" ? "6 3" : "4 4";
+}
+const _cursorVariantCache = {};
+function _cursorCssValue(id, state) {
+  const key = id + ":" + (state || "idle");
+  if (_cursorVariantCache[key]) return _cursorVariantCache[key];
+  const svg = _cursorSvgMarkup(id, state);
+  const value = svg
+    ? `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, " ").trim())}") ${_cursorHotspot(id)}, auto`
+    : "auto";
+  _cursorVariantCache[key] = value;
+  return value;
 }
 let _cursorStyleTag = null;
 function _ensureCursorStyleTag() {
   if (_cursorStyleTag && document.head.contains(_cursorStyleTag)) return _cursorStyleTag;
   _cursorStyleTag = document.getElementById("vv-cursor-style") || document.createElement("style");
   _cursorStyleTag.id = "vv-cursor-style";
-  // A themed cursor takes over everywhere via inheritance — but text
-  // fields keep the normal text-beam, or typing would feel broken.
+  // The themed cursor is set once, on <html>, and reaches everything else
+  // purely by CSS inheritance — so any element that already declares its
+  // own cursor (a button's `pointer`, a draggable track's `grab`, a
+  // disabled control's `not-allowed`, the lyrics picker's `crosshair`)
+  // keeps it automatically: a rule matching the element always wins over
+  // an inherited value, no matter its specificity. Nothing has to be
+  // special-cased here — only the two genuinely ambiguous defaults below
+  // (text fields, disabled controls) need a nudge, because a browser's
+  // native handling for them isn't expressed as a cursor rule we can
+  // inherit past.
   _cursorStyleTag.textContent = `
-    html[data-cursor]:not([data-cursor="arrow"]) * { cursor: var(--vv-cursor), auto !important; }
-    html[data-cursor]:not([data-cursor="arrow"]) input,
+    html[data-cursor]:not([data-cursor="arrow"]) { cursor: var(--vv-cursor); }
+    html[data-cursor]:not([data-cursor="arrow"]) input:not([type]),
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="text"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="search"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="password"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="email"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="number"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="tel"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="url"],
     html[data-cursor]:not([data-cursor="arrow"]) textarea,
-    html[data-cursor]:not([data-cursor="arrow"]) [contenteditable="true"] { cursor: text !important; }
-    /* A themed pointer is decorative — it must never swallow a cursor that
-       is actually communicating something (draggable, disabled, precision
-       picking). Each selector repeats the html[data-cursor] prefix only to
-       out-specificity the blanket rule above; it changes nothing else. */
-    html[data-cursor]:not([data-cursor="arrow"]) .tc-track,
-    html[data-cursor]:not([data-cursor="arrow"]) .dj-scrolltop,
-    html[data-cursor]:not([data-cursor="arrow"]) .dj-mini-scrolltop,
-    html[data-cursor]:not([data-cursor="arrow"]) #vqCanvas.vv-cursor-grab { cursor: grab !important; }
-    html[data-cursor]:not([data-cursor="arrow"]) .tc-track:active,
-    html[data-cursor]:not([data-cursor="arrow"]) .dj-scrolltop:active,
-    html[data-cursor]:not([data-cursor="arrow"]) .dj-mini-scrolltop:active { cursor: grabbing !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) [contenteditable="true"] { cursor: text; }
     html[data-cursor]:not([data-cursor="arrow"]) button:disabled,
-    html[data-cursor]:not([data-cursor="arrow"]) [aria-disabled="true"] { cursor: not-allowed !important; }
-    html[data-cursor]:not([data-cursor="arrow"]) .lyrics-overlay.picking .ly-line { cursor: crosshair !important; }
+    html[data-cursor]:not([data-cursor="arrow"]) input:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) select:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) [aria-disabled="true"] { cursor: not-allowed; }
   `;
   if (!_cursorStyleTag.isConnected) document.head.appendChild(_cursorStyleTag);
   return _cursorStyleTag;
+}
+function _setCursorState(state) {
+  const id = document.documentElement.getAttribute("data-cursor");
+  if (!id || id === "arrow") return;
+  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(id, state));
+}
+/** Walk up from el looking for the nearest ancestor whose *own* resolved
+ *  cursor is "pointer" — i.e. something the page's own CSS already marked
+ *  clickable (a button, a playlist row, a slider track, a chip…), without
+ *  needing a hand-maintained list of selectors. Stops early at anything
+ *  that already has its own distinct affordance (grab, text, crosshair,
+ *  not-allowed) — that's a different kind of interactive, not a click
+ *  target, so it shouldn't borrow the "hover" cursor treatment. */
+function _clickableAncestor(el) {
+  let depth = 0;
+  while (el && el.nodeType === 1 && depth < 12) {
+    const cur = getComputedStyle(el).cursor;
+    if (cur === "pointer") return el;
+    // Anything else explicit (grab, text, crosshair, not-allowed…) is a
+    // different affordance, not a click target — stop rather than credit
+    // it as "clickable". Only "auto" or our own inherited url(...) value
+    // (still undecided at this level) keeps the search going upward.
+    if (cur && cur !== "auto" && cur.indexOf("url(") !== 0) return null;
+    el = el.parentElement; depth++;
+  }
+  return null;
+}
+let _cursorHoverBound = false, _cursorHoverTarget = null;
+function _initCursorHoverStates() {
+  if (_cursorHoverBound) return;
+  _cursorHoverBound = true;
+  document.addEventListener("pointerover", (e) => {
+    const target = _clickableAncestor(e.target);
+    if (target === _cursorHoverTarget) return;
+    _cursorHoverTarget = target;
+    _setCursorState(target ? "hover" : "idle");
+  }, { passive: true });
+  document.addEventListener("pointerdown", (e) => {
+    if (_clickableAncestor(e.target)) _setCursorState("press");
+  }, { passive: true });
+  document.addEventListener("pointerup", (e) => {
+    _setCursorState(_clickableAncestor(e.target) ? "hover" : "idle");
+  }, { passive: true });
 }
 function applyCursor(id) {
   const opt = CURSOR_OPTIONS.find(c => c.id === id) || CURSOR_OPTIONS[0];
   _ensureCursorStyleTag();
   document.documentElement.setAttribute("data-cursor", opt.id);
-  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(opt.id));
+  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(opt.id, "idle"));
   return opt.id;
 }
 async function getCursorStyle() { return (await idbGet("kv", "cursorStyle")) || "arrow"; }
 async function setCursorStyle(id) { await idbSet("kv", "cursorStyle", id); return applyCursor(id); }
-async function initSharedCursor() { applyCursor(await getCursorStyle()); }
+async function initSharedCursor() { applyCursor(await getCursorStyle()); _initCursorHoverStates(); }
 
 /* ---------------------------------------------------------------------
    Scroll-to-top — a gold Westeros-badge FAB with a rising arrow, on every
