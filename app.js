@@ -2673,7 +2673,8 @@ function renderCursorGrid() {
     arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶",
     potion: "🧪", needle: "💉", ironfist: "🤜", nighthawk: "🦅",
     crow: "🐦‍⬛", butterfly: "🦋", spaceship: "🚀", pen: "🖋",
-    rifle: "🔫", snake: "🐍", okhand: "👌", flip: "🖕", luck: "🤞",
+    rifle: "🔫", snake: "🐍", paperjet: "✈️",
+    ...Object.fromEntries(Object.entries(window.VV.EMOJI_CURSORS).map(([id, c]) => [id, c.emoji])),
   };
   grid.innerHTML = window.VV.CURSOR_OPTIONS.map(c => `
     <div class="art-style-option ${current === c.id ? "active" : ""}" data-cursor-id="${c.id}" title="${c.hint}">
