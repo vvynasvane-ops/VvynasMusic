@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Vvynas Vane — Music Player</title>
+<meta name="description" content="Your local music library, reborn on the web.">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+
+<!-- Favicon: vector first (crisp at every size, modern browsers), with
+     raster fallbacks for browsers/contexts that don't support SVG icons. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icon-16.png" sizes="16x16" type="image/png">
+<link rel="shortcut icon" href="favicon.ico">
+
+<!-- iOS "Add to Home Screen" — Safari only ever reads apple-touch-icon,
+     never the manifest, so this is required for the icon to appear there. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vvynas Vane">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="future.css">
+</head>
+<body>
+
+<canvas id="themeCanvas"></canvas>
+<div id="rageBgLayer"></div>
+<video id="bgVideoLayer" muted loop playsinline autoplay disablepictureinpicture></video>
+<div id="vignetteOverlay"></div>
+<div id="scanOverlay"></div>
+<canvas id="pixieCanvas"></canvas>
+<canvas id="rageCanvas"></canvas>
+<div id="rageFlash"></div>
+<div id="rageGlitchIntro">
+  <canvas id="rageGlitchNoise"></canvas>
+  <div class="rage-glitch-band rage-glitch-r"></div>
+  <div class="rage-glitch-band rage-glitch-g"></div>
+  <div class="rage-glitch-band rage-glitch-b"></div>
+  <div class="rage-glitch-scan"></div>
+  <div class="rage-glitch-tear"></div>
+</div>
+
+<!-- Storybook page-turn transition (plays on new song / swipe) -->
+<div id="bookTransition">
+  <div class="leaf left"></div>
+  <div class="leaf right"></div>
+</div>
+
+<div id="app">
+
+  <!-- ============ ONBOARDING ============ -->
+  <div class="onboarding" id="onboarding">
+    <div class="onboarding-card" id="onboardingCard">
+      <img class="sigil-lg" src="favicon.svg" alt="Vvynas Vane" width="100" height="100">
+      <h1>Vvynas Vane</h1>
+      <p>Your library, reborn on the web. Grant access to a music folder on this device and it plays entirely offline, in your browser — nothing is ever uploaded.</p>
+      <button class="btn-primary" id="grantAccessBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+        Grant Access to Your Music
+      </button>
+      <div class="fine" id="fsApiNote"></div>
+    </div>
+
+    <!-- Connecting / scanning overlay — hourglass loader + cycling status -->
+    <div class="connecting-card hidden" id="connectingCard">
+      <div class="uib-hourglass" aria-hidden="true">
+        <div class="half"></div>
+        <div class="half"></div>
+      </div>
+      <div class="connecting-status" id="connectingStatus">Requesting access…</div>
+      <div class="connecting-sub" id="connectingSub">This stays on your device.</div>
+      <svg class="uib-track-loader" viewBox="0 0 50 31.25" preserveAspectRatio="xMidYMid meet" style="margin-top:22px;">
+        <path class="track" stroke-width="4" fill="none" pathlength="100" d="M0.625 21.5 h10.25 l3.75 -5.875 l7.375 15 l9.75 -30 l7.375 20.875 v0 h10.25"/>
+        <path class="car" stroke-width="4" fill="none" pathlength="100" d="M0.625 21.5 h10.25 l3.75 -5.875 l7.375 15 l9.75 -30 l7.375 20.875 v0 h10.25"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- ============ MAIN APP ============ -->
+  <div class="app-body hidden" id="appBody">
+
+    <!-- Sidebar (tablet / laptop) -->
+    <nav class="sidebar" id="sidebar">
+      <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <div class="brand" style="flex-direction:column;align-items:stretch;gap:0;">
+        <canvas id="globeTitleCanvas"></canvas>
+        <canvas id="heartTitleCanvas" class="hidden"></canvas>
+        <span class="ravens-line" id="ravensLine">RAVENS DISPATCHED...</span>
+      </div>
+
+      <ul class="nav-list">
+        <li><button class="nav-item active" data-view="songs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          Library <span class="count" id="navSongsCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="playlists">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/></svg>
+          Playlists <span class="count" id="navPlaylistsCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="folders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          Folders <span class="count" id="navFoldersCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="favorites">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+          Favorites <span class="count" id="navFavoritesCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="recent">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+          Recently Played <span class="count" id="navRecentCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="external">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg>
+          External <span class="count" id="navExternalCount"></span>
+        </button></li>
+      </ul>
+
+      <ul class="nav-list" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--divider);">
+        <li><a class="nav-item" href="dj.html" style="text-decoration:none;display:flex;color:var(--accent2);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 15V9l8 3-8 3z"/></svg>
+          ⚔ DJ Mode
+        </a></li>
+        <li><a class="nav-item" href="video.html" style="text-decoration:none;display:flex;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 9l5-3v12l-5-3"/></svg>
+          Video Player
+        </a></li>
+        <li><a class="nav-item" href="recap.html" style="text-decoration:none;display:flex;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 16h5M8 8h3"/></svg>
+          Recap
+        </a></li>
+      </ul>
+
+      <div class="sidebar-foot">
+        <div class="storage-pill"><span class="dot" id="storageDot"></span><span id="storageLabel">Loading library…</span></div>
+        <button class="sidebar-btn" id="rescanBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4v6h6M20 20v-6h-6M4.5 15a8 8 0 0014.5 3.5M19.5 9A8 8 0 005 5.5"/></svg>
+          Change / rescan folder
+        </button>
+        <button class="sidebar-btn" id="installSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 17V3m0 14l-4-4m4 4l4-4M5 21h14"/></svg>
+          Add to Home Screen
+        </button>
+        <button class="sidebar-btn" id="eqSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+          Equalizer
+        </button>
+        <button class="sidebar-btn" id="lyricsSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H8l-5 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 8h8M8 12h5"/></svg>
+          Lyrics
+        </button>
+        <button class="sidebar-btn" id="settingsBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+          Themes &amp; Settings
+        </button>
+      </div>
+    </nav>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- Main column -->
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <!-- Hide / show the menu bar (sidebar on tablet+laptop, tab bar on phone). Logic: dock.js · styles: future.css -->
+        <button class="icon-btn menu-toggle-btn" id="menuToggleBtn" type="button" aria-label="Hide menu bar" aria-pressed="false" title="Hide menu bar (B)">
+          <svg class="ic-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M16 10l-2 2 2 2"/></svg>
+          <svg class="ic-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M14 10l2 2-2 2"/></svg>
+        </button>
+        <h1 id="viewTitle">Library</h1>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="text" id="searchInput" placeholder="Search songs, artists, albums, playlists…">
+        </div>
+        <select class="sort-select" id="sortSelect">
+          <option value="title">Title A–Z</option>
+          <option value="artist">Artist A–Z</option>
+          <option value="album">Album A–Z</option>
+          <option value="duration">Duration</option>
+          <option value="size">File size</option>
+          <option value="year">Year</option>
+          <option value="dateAdded">Recently added</option>
+          <option value="playCount">Most played</option>
+        </select>
+        <button class="icon-btn" id="shuffleAllBtn" title="Shuffle play all">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h4l9 16h3M4 20h4l3-5.2M17 4h3v3M14 8.5L17 4M17 20v-3l3 0"/></svg>
+        </button>
+        <button class="icon-btn" id="homeCarouselBtn" title="Change background theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="6" height="12" rx="1"/><rect x="9" y="3" width="6" height="18" rx="1"/><rect x="15" y="6" width="6" height="12" rx="1"/></svg>
+        </button>
+        <!-- Only visible while the sidebar is hidden on tablet/laptop (Settings otherwise lives only in the sidebar) -->
+        <button class="icon-btn top-settings-btn" id="topSettingsBtn" type="button" aria-label="Themes &amp; Settings" title="Themes &amp; Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+        </button>
+      </header>
+
+      <div class="content-scroll" id="contentScroll">
+        <!-- Songs view -->
+        <section id="view-songs"></section>
+        <!-- Playlists view -->
+        <section id="view-playlists" class="hidden"></section>
+        <!-- Playlist detail -->
+        <section id="view-playlist-detail" class="hidden"></section>
+        <!-- Folders view -->
+        <section id="view-folders" class="hidden"></section>
+        <!-- Folder detail -->
+        <section id="view-folder-detail" class="hidden"></section>
+        <!-- Favorites view -->
+        <section id="view-favorites" class="hidden"></section>
+        <!-- Recently Played (default system playlist) -->
+        <section id="view-recent" class="hidden"></section>
+        <!-- External playlists (YouTube playlist/channel embeds) -->
+        <section id="view-external" class="hidden"></section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ MINI PLAYER ============ -->
+  <div class="mini-player with-sidebar hidden" id="miniPlayer">
+    <div class="mini-progress"><div class="mini-progress-buffered" id="miniProgressBuffered"></div><div class="mini-progress-fill" id="miniProgressFill"></div></div>
+    <div class="art" id="miniArt" style="width:46px;height:46px;border-radius:8px;"></div>
+    <div class="meta">
+      <div class="title" id="miniTitle">—</div>
+      <div class="sub" id="miniArtist">—</div>
+    </div>
+    <div class="mini-volume" id="miniVolume">
+      <button class="vol-mute-btn" id="miniMuteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="miniVolIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+      <input type="range" class="vol-slider" id="miniVolSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+    </div>
+    <div class="controls">
+      <button id="miniPrevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+      <button id="miniPlayBtn" class="play-btn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="miniPlayIcon"><path id="miniPlayIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="miniPlayIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
+      <button id="miniNextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+    </div>
+  </div>
+
+  <!-- ============ TAB BAR (phone) ============ -->
+  <nav class="tabbar hidden" id="tabbar">
+    <button class="active" data-view="songs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Library
+    </button>
+    <button data-view="playlists">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/></svg>
+      Playlists
+    </button>
+    <button data-view="folders">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+      Folders
+    </button>
+    <button data-view="favorites">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+      Favorites
+    </button>
+    <button data-action="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9M4.6 15a1.7 1.7 0 01-.3 1.9M12 3v2m0 14v2"/></svg>
+      More
+    </button>
+  </nav>
+
+  <!-- ============ FULL PLAYER ============ -->
+  <div class="player-overlay" id="playerOverlay">
+    <div class="player-top">
+      <button class="chev" id="playerCollapseBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg></button>
+      <span class="label" id="playerSourceLabel">Now Playing</span>
+      <button class="chev" id="playerQueueTopBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h16"/></svg></button>
+    </div>
+    <div class="player-scroll">
+      <div class="player-art-wrap">
+        <div class="art" id="playerArt"></div>
+        <button class="art-edit-btn" id="editArtBtn" title="Change album art">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </button>
+        <button class="art-reset-btn hidden" id="resetArtBtn" title="Reset to default art">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
+      </div>
+      <input type="file" id="albumArtUploadInput" accept="image/*" style="display:none;">
+      <div class="player-meta">
+        <div class="title" id="playerTitle">—</div>
+        <div class="artist" id="playerArtist">—</div>
+      </div>
+
+      <div class="player-seek">
+        <div class="seek-track" id="seekTrack">
+          <div class="seek-buffered" id="seekBuffered" title="How much of the file has finished loading"></div>
+          <div class="seek-fill" id="seekFill"></div>
+          <div class="seek-handle" id="seekHandle" style="left:0%"></div>
+        </div>
+        <div class="seek-times"><span id="curTime">0:00</span><span id="totalTime">0:00</span></div>
+      </div>
+
+      <div class="player-controls">
+        <button class="pc-toggle" id="shuffleBtn" title="Shuffle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h4l9 16h3M4 20h4l3-5.2M17 4h3v3M14 8.5L17 4M17 20v-3l3 0"/></svg></button>
+        <button class="pc-skip" id="prevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+        <button class="pc-play" id="playBtn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path id="playIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="playIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
+        <button class="pc-skip" id="nextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+        <button class="pc-toggle" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
+      </div>
+
+      <div class="player-volume" id="playerVolume">
+        <button class="vol-mute-btn" id="muteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="volIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+        <input type="range" class="vol-slider" id="volSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+        <span class="vol-value" id="volValue">100%</span>
+      </div>
+
+      <div class="player-bottom-row">
+        <button id="favBtn" title="Favorite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg></button>
+        <button id="addToPlaylistBtn" title="Add to playlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 8l12-2M9 18a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M21 12v6m3-3h-6" stroke-width="1.8"/></svg></button>
+        <button id="queueBtn" title="Up next (Q)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg></button>
+        <button id="lyricsBtn" title="Lyrics (L)" aria-label="Lyrics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H8l-5 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 8h8M8 12h5"/></svg></button>
+        <button id="eqBtn" title="Equalizer (E)" aria-label="Equalizer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ LYRICS VIEW ============
+       Full-screen, above the player. Synced (LRC) lyrics follow the song;
+       plain lyrics scroll. Logic lives in lyrics.js. -->
+  <div class="lyrics-overlay" id="lyricsOverlay" role="dialog" aria-label="Lyrics" aria-hidden="true">
+    <div class="ly-backdrop" id="lyBackdrop"></div>
+    <div class="ly-shade"></div>
+    <header class="ly-top">
+      <button class="ly-icon" id="lyCloseBtn" aria-label="Close lyrics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 9l-7 7-7-7"/></svg></button>
+      <div class="ly-heading">
+        <div class="ly-title" id="lyTitle">Lyrics</div>
+        <div class="ly-artist" id="lyArtist"></div>
+      </div>
+      <button class="ly-icon" id="lyMenuBtn" aria-label="Lyrics options" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+    </header>
+    <div class="ly-badge-row"><span class="ly-badge" id="lyBadge">No lyrics</span></div>
+
+    <div class="ly-stage">
+      <div class="ly-scroll" id="lyScroll" tabindex="0" aria-label="Lyrics">
+        <div class="ly-lines hidden" id="lyLines"></div>
+      </div>
+      <button class="ly-jump hidden" id="lyJump">↓ Follow along</button>
+
+      <div class="ly-empty hidden" id="lyEmpty">
+        <div class="ly-empty-icon">♪</div>
+        <div class="ly-empty-title" id="lyEmptyTitle">No lyrics for this song yet</div>
+        <div class="ly-empty-msg" id="lyEmptyMsg"></div>
+        <div class="ly-empty-btns" id="lyEmptyBtns">
+          <button class="btn-primary" id="lyEmptySearch">Search online</button>
+          <button class="btn-secondary" id="lyEmptyPaste">Paste or type lyrics</button>
+          <button class="btn-secondary" id="lyEmptyImport">Import .lrc / .txt</button>
+        </div>
+        <div class="ly-empty-tip">Tip: keep a file named like the song (<b>Song.lrc</b>) in the same folder and it's picked up automatically.</div>
+      </div>
+      <div class="ly-loading hidden" id="lyLoading"><div class="ly-spinner" aria-hidden="true"></div><div id="lyLoadingMsg">Looking for lyrics…</div></div>
+
+      <!-- options menu -->
+      <div class="ly-menu hidden" id="lyMenu" role="menu">
+        <button role="menuitem" data-act="search">🔎 <span>Search online <em>lrclib.net</em></span></button>
+        <button role="menuitem" data-act="another" class="hidden">🔁 <span>Try another match</span></button>
+        <button role="menuitem" data-act="edit">✏️ <span>Paste / edit lyrics</span></button>
+        <button role="menuitem" data-act="import">📂 <span>Import .lrc / .txt file</span></button>
+        <button role="menuitem" data-act="card">🖼 <span>Make a lyric card</span></button>
+        <button role="menuitem" data-act="copy">📋 <span>Copy lyrics</span></button>
+        <div class="ly-menu-row ly-shift-row"><span>⏱ Timing</span>
+          <span class="ly-stepper"><button data-act="shift-" aria-label="Lyrics earlier">−</button><b class="ly-shift-val">0.0s</b><button data-act="shift+" aria-label="Lyrics later">+</button></span></div>
+        <div class="ly-menu-row"><span>🔤 Text size</span>
+          <span class="ly-stepper"><button data-act="size-" aria-label="Smaller text">A−</button><b class="ly-size-val">100%</b><button data-act="size+" aria-label="Larger text">A+</button></span></div>
+        <button role="menuitemcheckbox" aria-checked="false" data-act="tele" class="ly-check">🧭 <span>Scroll unsynced lyrics with the song</span><i></i></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-act="auto" class="ly-check">🌐 <span>Search online when lyrics are missing</span><i></i></button>
+        <button role="menuitem" data-act="remove" class="danger hidden">🗑 <span>Remove my saved lyrics</span></button>
+      </div>
+
+      <!-- editor -->
+      <div class="ly-editor hidden" id="lyEditor">
+        <div class="ly-editor-card">
+          <h3>Your lyrics</h3>
+          <textarea id="lyEditText" spellcheck="false" placeholder="Paste lyrics here.&#10;Timed lines like [01:23.45] the words… make them follow along."></textarea>
+          <div class="ly-editor-actions">
+            <button class="btn-secondary" id="lyEditImport">Import file…</button>
+            <button class="btn-secondary" id="lyEditClear">Clear</button>
+            <span class="grow"></span>
+            <button class="btn-secondary" id="lyEditCancel">Cancel</button>
+            <button class="btn-primary" id="lyEditSave">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- online-lookup consent -->
+      <div class="ly-dialog hidden" id="lyDialog" role="alertdialog" aria-label="Search online for lyrics">
+        <div class="ly-dialog-card">
+          <h3>Search lrclib.net?</h3>
+          <p>Everything here stays on your device — unless you say yes. To find lyrics, the song's <b>title, artist and length</b> are sent to <b>lrclib.net</b>, a free, open lyrics database. Nothing else is shared, and matches are saved here so they work offline afterwards.</p>
+          <div class="ly-dialog-actions">
+            <button class="btn-primary" id="lyDialogOnce">Search this once</button>
+            <button class="btn-secondary" id="lyDialogAlways">Always allow when lyrics are missing</button>
+            <button class="btn-secondary" id="lyDialogNo">Not now</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="ly-bottom">
+      <div class="ly-seekrow"><span id="lyCur">0:00</span>
+        <div class="seek-track ly-seek" id="lySeek"><div class="seek-fill" id="lySeekFill" style="width:0%"></div></div>
+        <span id="lyTotal">0:00</span></div>
+      <div class="ly-transport">
+        <button id="lyPrev" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+        <button id="lyPlay" class="ly-play" aria-label="Play"><svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+        <button id="lyNext" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+      </div>
+    </footer>
+    <input type="file" id="lyFileInput" accept=".lrc,.txt,text/plain" style="display:none;">
+  </div>
+
+  <!-- ============ UP NEXT SHEET ============ -->
+  <div class="sheet-overlay" id="sheetOverlay"></div>
+  <div class="sheet" id="queueSheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head"><h2>Up Next</h2><button class="icon-btn" id="closeQueueBtn">✕</button></div>
+    <div class="sheet-body" id="queueList"></div>
+  </div>
+
+  <!-- ============ SONG ACTIONS SHEET ============
+       Opened from the single ⋮ kebab on each row. Full-width, generously
+       tall tappable rows on purpose — this replaced three cramped icon
+       buttons that were easy to miss and land on the row (which plays)
+       instead. One bigger, isolated target per row + a proper menu for
+       the actions is the same pattern Spotify/Apple Music/YouTube Music
+       use for this exact situation. -->
+  <div class="sheet-overlay" id="rowActionsSheetOverlay"></div>
+  <div class="sheet" id="rowActionsSheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <div class="row-actions-sheet-title">
+        <div class="t" id="rowActionsSongTitle"></div>
+        <div class="s" id="rowActionsSongArtist"></div>
+      </div>
+      <button class="icon-btn" id="closeRowActionsBtn">✕</button>
+    </div>
+    <div class="sheet-body" id="rowActionsList"></div>
+  </div>
+
+  <!-- ============ ADD TO PLAYLIST MODAL ============ -->
+  <div class="modal-overlay" id="playlistModalOverlay">
+    <div class="modal">
+      <h3 id="playlistModalTitle">Add to Playlist</h3>
+      <div id="playlistPickList"></div>
+      <button class="btn-secondary" id="newPlaylistFromModalBtn" style="margin-top:14px;">+ New Playlist</button>
+      <div class="modal-actions"><button class="btn-secondary" id="closePlaylistModalBtn" style="margin-top:0;">Close</button></div>
+    </div>
+  </div>
+
+  <!-- ============ NEW PLAYLIST MODAL ============ -->
+  <div class="modal-overlay" id="newPlaylistModalOverlay">
+    <div class="modal">
+      <h3 id="newPlaylistModalTitle">New Playlist</h3>
+      <input type="text" id="newPlaylistInput" placeholder="Playlist name" maxlength="60">
+      <div class="modal-actions">
+        <button class="btn-secondary" id="cancelNewPlaylistBtn">Cancel</button>
+        <button class="btn-primary" id="confirmNewPlaylistBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS MODAL ============ -->
+  <div class="modal-overlay" id="settingsModalOverlay">
+    <div class="modal" style="max-width:420px;">
+      <h3>Themes &amp; Settings</h3>
+
+      <div class="theme-row">
+        <span class="lbl">Light mode</span>
+        <button class="switch" id="lightModeSwitch"></button>
+      </div>
+      <div class="theme-row">
+        <span class="lbl">Resume last folder on open</span>
+        <button class="switch on" id="resumeSwitch"></button>
+      </div>
+
+      <div class="rage-toggle-row">
+        <span class="lbl">🔥 Rage Mode <span style="color:var(--text-muted);font-size:10.5px;">(audio-reactive, full app)</span></span>
+        <button class="rage-switch" id="rageModeSwitch"></button>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">Custom Colors</div>
+      <div class="color-row">
+        <span class="lbl">Accent color</span>
+        <div class="color-swatch-wrap">
+          <span class="hex-label" id="accentColorHex">#C9A84C</span>
+          <input type="color" id="accentColorInput" value="#C9A84C">
+        </div>
+      </div>
+      <div class="color-row">
+        <span class="lbl">Highlight color</span>
+        <div class="color-swatch-wrap">
+          <span class="hex-label" id="accent2ColorHex">#B22222</span>
+          <input type="color" id="accent2ColorInput" value="#B22222">
+        </div>
+      </div>
+      <button class="btn-secondary reset-colors-btn" id="resetColorsBtn">Reset to Westeros Gold</button>
+
+      <div class="section-label" style="margin-top:16px;">🖼 Background Image <span style="color:var(--text-muted);font-size:10.5px;">(shows in Light, Dark & Rage Mode)</span></div>
+      <div class="rage-bg-grid" id="rageBgGrid"></div>
+      <input type="file" id="rageBgUploadInput" accept="image/*" style="display:none;">
+
+      <div class="section-label" style="margin-top:16px;">Ambience Effect <span style="color:var(--text-muted);font-size:10.5px;">(only in Rage Mode)</span></div>
+      <div class="rage-drip-grid" id="rageDripGrid"></div>
+
+      <div class="section-label" style="margin-top:16px;">Album Art Style</div>
+      <div class="art-style-grid" id="artStyleGrid"></div>
+
+      <div class="section-label" style="margin-top:16px;">Cursor</div>
+      <div class="art-style-grid" id="cursorGrid"></div>
+
+      <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
+      <div class="font-grid" id="fontGrid"></div>
+
+      <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <span>Animated Background (42 themes) <span style="color:var(--text-muted);font-size:10.5px;">— or upload your own video</span></span>
+        <button class="carousel-launch-btn" id="openThemeCarouselBtn" type="button">🎠 Carousel</button>
+      </div>
+      <div class="theme-grid" id="themeGrid"></div>
+      <input type="file" id="themeVideoUploadInput" accept="video/*" style="display:none;">
+
+      <div class="section-label" style="margin-top:16px;">Now Playing Overlay Strength <span style="color:var(--text-muted);font-size:10.5px;">(keeps song details readable over any background)</span></div>
+      <div class="overlay-strength-row">
+        <span class="overlay-strength-icon" title="Background fully visible">☾</span>
+        <input type="range" id="overlayStrengthInput" min="0" max="100" step="5" value="55">
+        <span class="overlay-strength-icon" title="Song details fully shielded">◆</span>
+        <span class="overlay-strength-value" id="overlayStrengthValue">55%</span>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">Song List Darkness <span style="color:var(--text-muted);font-size:10.5px;">(dims the background behind your library list)</span></div>
+      <div class="overlay-strength-row">
+        <span class="overlay-strength-icon" title="Background fully visible">☾</span>
+        <input type="range" id="songListOverlayInput" min="0" max="100" step="5" value="40">
+        <span class="overlay-strength-icon" title="Song list panel near-black">◆</span>
+        <span class="overlay-strength-value" id="songListOverlayValue">40%</span>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">⌨ Keyboard Shortcuts</div>
+      <div class="shortcut-list" id="shortcutList"></div>
+      <div class="shortcut-note" id="shortcutNote"></div>
+
+      <div class="modal-actions">
+        <button class="btn-secondary" id="closeSettingsBtn">Close</button>
+        <button class="btn-primary" id="settingsRescanBtn">Change Folder</button>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <button class="btn-secondary" id="settingsEqBtn" type="button" style="margin-top:0;">🎚 Equalizer</button>
+        <button class="btn-secondary" id="settingsLyricsBtn" type="button" style="margin-top:0;">💬 Lyrics</button>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <a href="video.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Video Player</a>
+        <a href="recap.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Recap</a>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <a href="dj.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;width:100%;color:var(--accent2);border-color:var(--accent2);">⚔ Enter DJ Mode</a>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">Legal &amp; Info</div>
+      <div class="modal-actions" style="margin-top:0;">
+        <a href="about.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">About &amp; Contact</a>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <a href="privacy.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Privacy Policy</a>
+        <a href="terms.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Terms &amp; Conditions</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ iOS INSTALL INSTRUCTIONS MODAL ============ -->
+  <div class="modal-overlay" id="iosModalOverlay">
+    <div class="modal">
+      <h3>Add to Home Screen</h3>
+      <ol class="ios-steps">
+        <li><span class="num">1</span>Tap the <strong>Share</strong> icon in Safari's toolbar.</li>
+        <li><span class="num">2</span>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+        <li><span class="num">3</span>Tap <strong>Add</strong> — Vvynas Vane now opens full-screen like any other app.</li>
+      </ol>
+      <div class="modal-actions"><button class="btn-primary" id="closeIosModalBtn">Got it</button></div>
+    </div>
+  </div>
+
+  <!-- ============ BACKGROUND TEMPLATE CAROUSEL ============
+       A coverflow-style alternative to scrolling the theme grid: the
+       centered card is the live preview (the real animated background
+       swaps in behind this translucent panel as you browse), side cards
+       recede in a shallow 3D arc left/right, and the strip wraps end to
+       end so spinning past the last theme loops back to the first —
+       like rotating a small globe of previews rather than a flat list. -->
+  <div class="modal-overlay theme-carousel-overlay" id="themeCarouselOverlay">
+    <div class="theme-carousel-shell">
+      <button class="tc-close" id="tcCloseBtn" aria-label="Close carousel">✕</button>
+      <div class="tc-title">Spin to a Background</div>
+      <div class="tc-stage">
+        <button class="tc-nav tc-nav-left" id="tcPrevBtn" aria-label="Previous background">‹</button>
+        <div class="tc-track" id="tcTrack"></div>
+        <button class="tc-nav tc-nav-right" id="tcNextBtn" aria-label="Next background">›</button>
+      </div>
+      <div class="tc-current-label" id="tcCurrentLabel"></div>
+      <button class="btn-primary tc-confirm" id="tcConfirmBtn">Use This Background</button>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<input type="file" id="folderFallbackInput" webkitdirectory multiple accept="audio/*,.mp3,.mp2,.m4a,.m4b,.m4p,.m4r,.aac,.wav,.wave,.flac,.ogg,.oga,.ogx,.opus,.weba,.webm,.wma,.aiff,.aif,.aifc,.amr,.mka,.caf,.3gp,.3g2,.3ga,.spx,.ape,.mpc,.tta,.wv,.au,.snd,.mid,.midi" class="hidden">
+
+<script src="shared.js"></script>
+<script src="eq.js"></script>
+<script src="lyrics.js"></script>
+<script src="app.js"></script>
+<script src="dock.js"></script>
+<script src="future.js"></script>
+</body>
+</html>

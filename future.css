@@ -1,0 +1,230 @@
+/* =========================================================================
+   VVYNAS VANE — future.css
+   1) Menu dock (hide / show the menu bar)           — pairs with dock.js
+   2) Future Hub + the ten features                  — pairs with future.js
+   Everything is namespaced `.fx-*` / `#fx*` and reads the app's existing
+   theme variables, so custom accent colours, light mode and Rage Mode all
+   carry through automatically.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------------
+   1) MENU DOCK
+   --------------------------------------------------------------------- */
+.menu-toggle-btn .ic-show { display: none; }
+html.menu-hidden .menu-toggle-btn .ic-hide { display: none; }
+html.menu-hidden .menu-toggle-btn .ic-show { display: block; }
+.menu-toggle-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dark); background: var(--accent-dim); }
+.top-settings-btn { display: none; }
+
+/* Tablet / laptop: the sidebar slides off to the left. The negative margin
+   (not width:0) keeps its inner layout intact so it doesn't reflow mid-slide;
+   visibility flips only after the slide, which also drops it from the Tab order. */
+@media (min-width: 900px) {
+  .sidebar {
+    transition: margin-left .32s cubic-bezier(.4, 0, .2, 1), visibility 0s linear 0s;
+  }
+  html.menu-hidden .sidebar {
+    margin-left: calc(var(--nav-w) * -1);
+    visibility: hidden; pointer-events: none;
+    transition: margin-left .32s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .32s;
+  }
+  .mini-player { transition: left .32s cubic-bezier(.4, 0, .2, 1); }
+  html.menu-hidden .mini-player.with-sidebar { left: 0; }
+  html.menu-hidden .top-settings-btn { display: flex; }
+}
+
+/* Phone: the bottom tab bar slides down; the mini-player takes its slot. */
+@media (max-width: 899px) {
+  .tabbar { transition: transform .3s cubic-bezier(.4, 0, .2, 1), visibility 0s linear 0s; }
+  html.menu-hidden .tabbar {
+    transform: translateY(100%); visibility: hidden; pointer-events: none;
+    transition: transform .3s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .3s;
+  }
+  .mini-player { transition: bottom .3s cubic-bezier(.4, 0, .2, 1); }
+  html.menu-hidden .mini-player { bottom: 0; }
+  html.menu-hidden .content-scroll {
+    padding-bottom: calc(var(--player-h) + var(--safe-bottom) + 20px);
+    scroll-padding-bottom: calc(var(--player-h) + var(--safe-bottom) + 12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, html.menu-hidden .sidebar, .mini-player, .tabbar, html.menu-hidden .tabbar { transition: none !important; }
+}
+
+/* ---------------------------------------------------------------------
+   2) FUTURE HUB
+   --------------------------------------------------------------------- */
+:root { --fx-dock-left: var(--nav-w); --fx-bottom: calc(var(--player-h) + var(--safe-bottom)); }
+html.menu-hidden { --fx-dock-left: 0px; }
+@media (max-width: 899px) {
+  :root { --fx-dock-left: 0px; --fx-bottom: calc(var(--player-h) + 56px + var(--safe-bottom)); }
+  html.menu-hidden { --fx-bottom: calc(var(--player-h) + var(--safe-bottom)); }
+}
+
+/* Floating launcher */
+.fx-fab {
+  position: fixed; right: 14px; bottom: calc(var(--fx-bottom) + 14px); z-index: 41;
+  width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); background: var(--bg-card); border: 1px solid var(--accent-dark);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45), 0 0 0 0 var(--accent-dim);
+  transition: transform .2s, box-shadow .3s, opacity .2s, bottom .3s cubic-bezier(.4, 0, .2, 1);
+  cursor: pointer;
+}
+.fx-fab:hover { transform: scale(1.07); box-shadow: 0 6px 26px rgba(0, 0, 0, .5), 0 0 18px var(--accent-dim); }
+.fx-fab svg { width: 22px; height: 22px; }
+.fx-fab[aria-expanded="true"] { background: var(--accent-dim); }
+.fx-fab.fx-away { opacity: 0; pointer-events: none; transform: scale(.7); }
+
+/* In-player launcher (the FAB sits behind the full-screen player) */
+.fx-player-btn {
+  position: absolute; right: 18px; top: calc(66px + var(--safe-top)); z-index: 3;
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); background: var(--ripple); border: 1px solid var(--divider);
+}
+.fx-player-btn svg { width: 18px; height: 18px; }
+.fx-player-btn:hover { color: var(--accent); }
+
+/* The hub panel */
+.fx-hub {
+  position: fixed; right: 14px; bottom: calc(var(--fx-bottom) + 72px); z-index: 46;
+  width: min(372px, calc(100vw - 28px));
+  max-height: calc(100dvh - var(--fx-bottom) - 96px - var(--safe-top));
+  display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid var(--accent-dark); border-radius: var(--radius-l);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .6), 0 0 40px var(--accent-dim);
+  color: var(--text-primary);
+  opacity: 0; transform: translateY(14px) scale(.97); transform-origin: bottom right;
+  pointer-events: none; visibility: hidden;
+  transition: opacity .22s, transform .22s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .22s;
+}
+.fx-hub.open { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity .22s, transform .22s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
+.fx-hub-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+.fx-hub-title { font-family: var(--font-display); letter-spacing: .1em; text-transform: uppercase; font-size: 12px; color: var(--accent); }
+.fx-x { width: 28px; height: 28px; border-radius: 50%; color: var(--text-secondary); background: var(--ripple); font-size: 12px; }
+.fx-x:hover { color: var(--accent); }
+.fx-hub-body { overflow-y: auto; padding: 4px 12px 14px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
+
+.fx-wide {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 14px; border-radius: var(--radius-m); border: 1px solid var(--divider);
+  background: var(--ripple); color: var(--text-primary); font-size: 13.5px; text-align: left;
+}
+.fx-wide:hover { border-color: var(--accent-dark); background: var(--accent-dim); }
+.fx-wide kbd, .fx-kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--text-secondary);
+  border: 1px solid var(--divider); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--bg-card);
+}
+
+.fx-card { border: 1px solid var(--divider); border-radius: var(--radius-m); background: var(--bg-card); padding: 11px 13px 12px; }
+.fx-card h4 { margin: 0 0 8px; font-family: var(--font-display); font-weight: 600; font-size: 12.5px; letter-spacing: .06em; color: var(--text-primary); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fx-card h4 small { font-weight: 400; letter-spacing: 0; font-size: 11px; color: var(--text-muted); }
+.fx-note { margin: 7px 0 0; font-size: 11px; line-height: 1.4; color: var(--text-muted); }
+.fx-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fx-status { font-size: 12px; color: var(--text-secondary); min-height: 16px; }
+
+/* Switch */
+.fx-switch { position: relative; width: 40px; height: 22px; border-radius: 999px; background: var(--divider); border: 1px solid var(--accent-dark); flex: none; transition: background .2s; }
+.fx-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-secondary); transition: transform .2s, background .2s; }
+.fx-switch[aria-checked="true"] { background: var(--accent-dim); }
+.fx-switch[aria-checked="true"]::after { transform: translateX(18px); background: var(--accent); }
+
+/* Chips / segmented */
+.fx-chip {
+  padding: 6px 11px; border-radius: 999px; font-size: 12px; color: var(--text-secondary);
+  border: 1px solid var(--divider); background: var(--ripple); transition: all .15s;
+}
+.fx-chip:hover { border-color: var(--accent-dark); color: var(--accent); }
+.fx-chip.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent-dark); }
+.fx-chip:disabled { opacity: .45; pointer-events: none; }
+.fx-chip.fx-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+.fx-range { width: 100%; accent-color: var(--accent); margin: 2px 0 4px; }
+.fx-big { font-family: var(--font-display); font-size: 26px; color: var(--accent); line-height: 1; }
+.fx-big small { font-size: 11px; color: var(--text-muted); letter-spacing: .1em; margin-left: 4px; }
+
+/* BPM ring */
+.fx-bpm { display: flex; align-items: center; gap: 14px; }
+.fx-bpm-ring { --p: 0; width: 46px; height: 46px; border-radius: 50%; flex: none; border: 2px solid var(--accent-dark);
+  box-shadow: 0 0 calc(4px + var(--p) * 16px) calc(var(--p) * 3px) var(--accent-dim); transform: scale(calc(1 + var(--p) * .12)); background: radial-gradient(circle, var(--accent-dim), transparent 70%); }
+
+/* ---------------------------------------------------------------------
+   Holo Visualizer — a click-through strip above the mini-player
+   --------------------------------------------------------------------- */
+#fxViz {
+  position: fixed; left: var(--fx-dock-left); right: 0; bottom: var(--fx-bottom);
+  width: calc(100vw - var(--fx-dock-left)); height: 92px; z-index: 19; pointer-events: none;
+  opacity: 0; transition: opacity .35s, left .32s cubic-bezier(.4, 0, .2, 1), width .32s cubic-bezier(.4, 0, .2, 1);
+  -webkit-mask-image: linear-gradient(to top, #000 55%, transparent); mask-image: linear-gradient(to top, #000 55%, transparent);
+}
+#fxViz.on { opacity: .95; }
+html.fx-player-open #fxViz { z-index: 42; bottom: 0; height: 130px; left: 0; width: 100vw; }
+html.fx-player-open #fxViz.on { opacity: .5; }
+html.fx-lyrics-open #fxViz, html.fx-eq-open #fxViz { opacity: 0 !important; }
+
+/* ---------------------------------------------------------------------
+   Aura Edge — beat-reactive screen-edge glow in the album art's colour
+   --------------------------------------------------------------------- */
+#fxAura {
+  --fx-rgb: 201, 168, 76; --fx-a: .12; --fx-s: 40px;
+  position: fixed; inset: 0; z-index: 85; pointer-events: none; opacity: 0; transition: opacity .5s;
+  box-shadow: inset 0 0 var(--fx-s) calc(var(--fx-s) * .22) rgba(var(--fx-rgb), var(--fx-a));
+  mix-blend-mode: screen;
+}
+#fxAura.on { opacity: 1; }
+[data-theme="light"] #fxAura { mix-blend-mode: multiply; }
+
+/* ---------------------------------------------------------------------
+   Loop Gate — A / B markers on the seek bar
+   --------------------------------------------------------------------- */
+.fx-loop-range { position: absolute; top: -2px; bottom: -2px; border-radius: 3px; background: var(--accent-dim); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); pointer-events: none; display: none; }
+.fx-loop-range.on { display: block; }
+.fx-loop-pin { position: absolute; top: -6px; width: 2px; height: 16px; background: var(--accent); pointer-events: none; display: none; }
+.fx-loop-pin.on { display: block; }
+.fx-loop-pin::after { content: attr(data-l); position: absolute; top: -11px; left: -3px; font-size: 9px; font-weight: 700; color: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Command Palette + Share Card (modal layer, above everything)
+   --------------------------------------------------------------------- */
+.fx-modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px;
+  background: rgba(0, 0, 0, .6); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; visibility: hidden; transition: opacity .18s, visibility 0s linear .18s; }
+.fx-modal.open { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity .18s, visibility 0s; }
+
+.fx-pal { width: min(640px, 100%); max-height: 70dvh; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-secondary); border: 1px solid var(--accent-dark); border-radius: var(--radius-l); box-shadow: 0 24px 80px rgba(0, 0, 0, .7), 0 0 50px var(--accent-dim); }
+.fx-pal-input { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--divider); }
+.fx-pal-input svg { width: 18px; height: 18px; color: var(--accent); flex: none; }
+.fx-pal-input input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--text-primary); font: inherit; font-size: 16px; }
+.fx-pal-input input::placeholder { color: var(--text-muted); }
+.fx-pal-list { overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
+.fx-pal-group { padding: 8px 12px 4px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-muted); }
+.fx-pal-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border-radius: var(--radius-s); text-align: left; color: var(--text-secondary); }
+.fx-pal-item .ic { width: 22px; text-align: center; flex: none; color: var(--accent); }
+.fx-pal-item .tx { min-width: 0; flex: 1; }
+.fx-pal-item .t { color: var(--text-primary); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-pal-item .s { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-pal-item .k { font-size: 10.5px; color: var(--text-muted); flex: none; }
+.fx-pal-item.sel, .fx-pal-item:hover { background: var(--accent-dim); }
+.fx-pal-empty { padding: 22px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.fx-pal-foot { display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--divider); font-size: 11px; color: var(--text-muted); }
+
+.fx-share { width: min(420px, 100%); max-height: 86dvh; display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 14px; overflow-y: auto;
+  background: var(--bg-secondary); border: 1px solid var(--accent-dark); border-radius: var(--radius-l); box-shadow: 0 24px 80px rgba(0, 0, 0, .7); }
+.fx-share canvas { width: 100%; max-height: 60dvh; object-fit: contain; border-radius: 12px; background: #05060d; }
+.fx-modal.fx-center { align-items: center; padding-top: 16px; }
+
+@media (max-width: 899px) {
+  .fx-modal { padding-top: 8vh; }
+  .fx-hub { bottom: calc(var(--fx-bottom) + 70px); }
+}
+
+/* Reduced motion: keep everything functional, drop the flourishes */
+@media (prefers-reduced-motion: reduce) {
+  .fx-fab, .fx-hub, .fx-modal, #fxViz, #fxAura { transition: none !important; }
+  .fx-bpm-ring { transform: none !important; }
+}
